@@ -1,0 +1,143 @@
+{
+  "version": 1,
+  "levels": {
+    "chat_only": {
+      "label": "Chat Only",
+      "description": "LLM can only send messages. No file operations.",
+      "allowed_triggers": ["MESSAGE"]
+    },
+    "read_preview": {
+      "label": "Read & Preview",
+      "description": "LLM can read files and open previews. No modifications.",
+      "allowed_triggers": ["MESSAGE", "PREVIEW", "READ", "LIST", "GITHUB_READ", "NOTION_READ", "SLACK_READ", "GDRIVE_READ"]
+    },
+    "full_access": {
+      "label": "Full Access",
+      "description": "LLM can read, create, edit, and delete files.",
+      "allowed_triggers": ["MESSAGE", "CREATE", "DELETE", "WRITE", "INSERT", "APPEND", "PREVIEW", "READ", "RENAME", "LIST", "CREATE_DOCX", "CREATE_XLSX", "CREATE_PPTX", "CREATE_MP3", "EXPORT_PDF", "PLAN", "GITHUB_READ", "NOTION_READ", "SLACK_READ", "GDRIVE_READ"]
+    }
+  },
+  "providers": {
+    "openai": {
+      "display_name": "OpenAI",
+      "available_levels": ["chat_only", "read_preview", "full_access"],
+      "default_level": "full_access",
+      "api_mapping": {
+        "chat_only": { "tool_choice": "none", "tools": [] },
+        "read_preview": { "tool_choice": "auto", "tools": ["read", "list", "preview"] },
+        "full_access": { "tool_choice": "auto", "tools": ["all"] }
+      },
+      "notes": null
+    },
+    "openai-codex": {
+      "display_name": "OpenAI Codex",
+      "available_levels": ["chat_only", "read_preview", "full_access"],
+      "default_level": "full_access",
+      "api_mapping": {
+        "chat_only": { "tool_choice": "none", "tools": [] },
+        "read_preview": { "tool_choice": "auto", "tools": ["read", "list", "preview"] },
+        "full_access": { "tool_choice": "auto", "tools": ["all"] }
+      },
+      "notes": null
+    },
+    "anthropic": {
+      "display_name": "Anthropic",
+      "available_levels": ["chat_only", "read_preview", "full_access"],
+      "default_level": "full_access",
+      "api_mapping": {
+        "chat_only": { "tool_choice": "none", "tools": [] },
+        "read_preview": { "tool_choice": "auto", "tools": ["read", "list", "preview"] },
+        "full_access": { "tool_choice": "auto", "tools": ["all"] }
+      },
+      "notes": null
+    },
+    "google": {
+      "display_name": "Google Gemini",
+      "available_levels": ["chat_only", "read_preview", "full_access"],
+      "default_level": "full_access",
+      "api_mapping": {
+        "chat_only": { "function_calling_config": { "mode": "NONE" }, "function_declarations": [] },
+        "read_preview": { "function_calling_config": { "mode": "AUTO" }, "function_declarations": ["read", "list", "preview"] },
+        "full_access": { "function_calling_config": { "mode": "AUTO" }, "function_declarations": ["all"] }
+      },
+      "notes": "Gemini may ignore system messages. Protocol is injected as the first user message instead."
+    },
+    "ollama": {
+      "display_name": "Ollama (Local)",
+      "available_levels": ["chat_only", "read_preview", "full_access"],
+      "default_level": "chat_only",
+      "api_mapping": {
+        "chat_only": { "tools": [] },
+        "read_preview": { "tools": ["read", "list", "preview"] },
+        "full_access": { "tools": ["all"] }
+      },
+      "notes": "Not all models support tool calling. Falls back to Chat Only if unsupported."
+    },
+    "groq": {
+      "display_name": "Groq",
+      "available_levels": ["chat_only", "read_preview", "full_access"],
+      "default_level": "full_access",
+      "api_mapping": {
+        "chat_only": { "tool_choice": "none", "tools": [] },
+        "read_preview": { "tool_choice": "auto", "tools": ["read", "list", "preview"] },
+        "full_access": { "tool_choice": "auto", "tools": ["all"] }
+      },
+      "notes": null
+    },
+    "openrouter": {
+      "display_name": "OpenRouter",
+      "available_levels": ["chat_only", "read_preview", "full_access"],
+      "default_level": "full_access",
+      "api_mapping": {
+        "chat_only": { "tool_choice": "none", "tools": [] },
+        "read_preview": { "tool_choice": "auto", "tools": ["read", "list", "preview"] },
+        "full_access": { "tool_choice": "auto", "tools": ["all"] }
+      },
+      "notes": null
+    },
+    "mistral": {
+      "display_name": "Mistral AI",
+      "available_levels": ["chat_only", "read_preview", "full_access"],
+      "default_level": "full_access",
+      "api_mapping": {
+        "chat_only": { "tool_choice": "none", "tools": [] },
+        "read_preview": { "tool_choice": "auto", "tools": ["read", "list", "preview"] },
+        "full_access": { "tool_choice": "auto", "tools": ["all"] }
+      },
+      "notes": null
+    },
+    "together": {
+      "display_name": "Together AI",
+      "available_levels": ["chat_only", "read_preview", "full_access"],
+      "default_level": "full_access",
+      "api_mapping": {
+        "chat_only": { "tool_choice": "none", "tools": [] },
+        "read_preview": { "tool_choice": "auto", "tools": ["read", "list", "preview"] },
+        "full_access": { "tool_choice": "auto", "tools": ["all"] }
+      },
+      "notes": null
+    },
+    "deepseek": {
+      "display_name": "DeepSeek",
+      "available_levels": ["chat_only", "read_preview", "full_access"],
+      "default_level": "full_access",
+      "api_mapping": {
+        "chat_only": { "tool_choice": "none", "tools": [] },
+        "read_preview": { "tool_choice": "auto", "tools": ["read", "list", "preview"] },
+        "full_access": { "tool_choice": "auto", "tools": ["all"] }
+      },
+      "notes": null
+    },
+    "xai": {
+      "display_name": "xAI (Grok)",
+      "available_levels": ["chat_only", "read_preview", "full_access"],
+      "default_level": "full_access",
+      "api_mapping": {
+        "chat_only": { "tool_choice": "none", "tools": [] },
+        "read_preview": { "tool_choice": "auto", "tools": ["read", "list", "preview"] },
+        "full_access": { "tool_choice": "auto", "tools": ["all"] }
+      },
+      "notes": null
+    }
+  }
+}

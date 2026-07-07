@@ -1,0 +1,31 @@
+{
+  "$schema": "../gen/schemas/capabilities.schema.json",
+  "identifier": "default",
+  "description": "Default capabilities for Open Atelier",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "dialog:allow-message",
+    "dialog:allow-ask",
+    "fs:default",
+    "fs:allow-read-file",
+    "fs:allow-write-file",
+    "fs:allow-read-dir",
+    "fs:allow-mkdir",
+    "fs:allow-remove",
+    "fs:allow-rename",
+    "fs:allow-exists",
+    "fs:allow-stat",
+    {
+      "identifier": "fs:scope",
+      "allow": [{ "path": "**" }]
+    },
+    "shell:default",
+    "shell:allow-open",
+    "updater:default",
+    "process:default"
+  ]
+}

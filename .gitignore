@@ -1,0 +1,25 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+
+# Rust
+src-tauri/target/
+src-tauri/gen/
+
+# Tauri
+*.dmg
+*.AppImage
+*.deb
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+.claude/

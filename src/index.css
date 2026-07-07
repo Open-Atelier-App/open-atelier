@@ -1,0 +1,101 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --bg-app: #F8F5F0;
+    --bg-surface: #FFFFFF;
+    --bg-sidebar: #F4F0EA;
+    --border: #E8E3DC;
+    --text-primary: #1A1814;
+    --text-muted: #6B6560;
+    --accent: #C17B3E;
+    --accent-hover: #8B5420;
+    --success: #3D7A5A;
+    --error: #C44B3A;
+    --overlay: rgba(26, 24, 20, 0.06);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg-app: #161616;
+      --bg-surface: #1E1E20;
+      --bg-sidebar: #1C1C1E;
+      --border: #2C2C2E;
+      --text-primary: #ECEAE6;
+      --text-muted: #98948C;
+      --accent: #D08A4E;
+      --accent-hover: #C17B3E;
+      --success: #4E9A77;
+      --error: #E0604F;
+      --overlay: rgba(0, 0, 0, 0.32);
+    }
+  }
+
+  [data-theme="dark"] {
+    --bg-app: #161616;
+    --bg-surface: #1E1E20;
+    --bg-sidebar: #1C1C1E;
+    --border: #2C2C2E;
+    --text-primary: #ECEAE6;
+    --text-muted: #98948C;
+    --accent: #D08A4E;
+    --accent-hover: #C17B3E;
+    --success: #4E9A77;
+    --error: #E0604F;
+    --overlay: rgba(0, 0, 0, 0.32);
+  }
+
+  [data-theme="light"] {
+    --bg-app: #F8F5F0;
+    --bg-surface: #FFFFFF;
+    --bg-sidebar: #F4F0EA;
+    --border: #E8E3DC;
+    --text-primary: #1A1814;
+    --text-muted: #6B6560;
+    --accent: #C17B3E;
+    --accent-hover: #8B5420;
+    --success: #3D7A5A;
+    --error: #C44B3A;
+    --overlay: rgba(26, 24, 20, 0.06);
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--bg-app);
+    color: var(--text-primary);
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  code, pre, .font-mono {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  }
+
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
