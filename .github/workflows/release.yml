@@ -122,22 +122,26 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             version="$(node -p "require('./src-tauri/tauri.conf.json').version")"
           fi
-          mkdir -p dist
+          # A distinct staging dir, not "dist" — that name collides with
+          # frontendDist ("../dist" in tauri.conf.json), the Vite frontend
+          # build's own output directory at the repo root, which already
+          # has unrelated files (assets/, index.html) in it by this point.
+          mkdir -p release-dist
           bundle_dir="src-tauri/target/${{ matrix.target }}/release/bundle"
           src_tarball="$(find "$bundle_dir" -name '*.tar.gz' | head -n1)"
           if [ -z "$src_tarball" ]; then
             echo "No updater .tar.gz bundle found under $bundle_dir — is the updater plugin active in tauri.conf.json?" >&2
             exit 1
           fi
-          dest="dist/Open-Atelier-${version}-${{ matrix.contract_target }}.tar.gz"
+          dest="release-dist/Open-Atelier-${version}-${{ matrix.contract_target }}.tar.gz"
           cp "$src_tarball" "$dest"
           cp "$src_tarball.sig" "$dest.sig"
           # macOS runners ship BSD `shasum`, not GNU `sha256sum` — fall back
           # to whichever is actually present rather than assuming Linux.
           if command -v sha256sum >/dev/null 2>&1; then
-            sha256sum dist/* > "dist/Open-Atelier-${version}-${{ matrix.contract_target }}.sha256"
+            sha256sum release-dist/* > "release-dist/Open-Atelier-${version}-${{ matrix.contract_target }}.sha256"
           else
-            shasum -a 256 dist/* > "dist/Open-Atelier-${version}-${{ matrix.contract_target }}.sha256"
+            shasum -a 256 release-dist/* > "release-dist/Open-Atelier-${version}-${{ matrix.contract_target }}.sha256"
           fi
 
       - name: Upload artifacts
@@ -148,7 +152,7 @@ jobs:
             src-tauri/target/${{ matrix.target }}/release/bundle/**/*.dmg
             src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage
             src-tauri/target/${{ matrix.target }}/release/bundle/**/*.deb
-            dist/*
+            release-dist/*
 
   publish-release:
     needs: release
@@ -175,7 +179,7 @@ jobs:
             checksums.txt
 
       # Uploading the renamed Open-Atelier-<version>-<target>.tar.gz(.sig)
-      # artifacts from `artifacts/**/dist/` to
+      # artifacts from `artifacts/**/release-dist/` to
       # open-atelier.app/update/downloads/<version>/, and bumping
       # `releases.json` in the open-atelier-public-website repo, are
       # deliberately left as manual follow-up steps: both need
