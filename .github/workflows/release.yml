@@ -52,6 +52,7 @@ jobs:
 
   release:
     needs: test
+    environment: release
     strategy:
       matrix:
         include:
