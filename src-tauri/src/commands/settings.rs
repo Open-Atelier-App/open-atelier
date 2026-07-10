@@ -1,12 +1,11 @@
-use tauri::State;
-use crate::db::{Db, now_ms};
+use super::cred_store::{
+    migrate_global_to_profile, profile_store_backend, profile_store_delete, profile_store_get,
+    profile_store_set, store_backend, store_delete, store_get, store_set,
+};
+use crate::db::Db;
 use crate::error::{AtelierError, Result};
 use crate::models::KeyStatus;
-use super::cred_store::{
-    store_set, store_get, store_delete, store_backend,
-    profile_store_set, profile_store_get, profile_store_delete, profile_store_backend,
-    migrate_global_to_profile,
-};
+use tauri::State;
 
 pub(crate) const SERVICE_NAME: &str = "com.openatelier.app";
 
@@ -44,14 +43,21 @@ pub fn cred_get(provider: String, cred_type: String) -> Result<Option<String>> {
 /// in (e.g. so the frontend can show a "stored in local fallback, not OS
 /// keychain" hint).
 #[tauri::command]
-pub fn cred_get_with_backend(provider: String, cred_type: String) -> Result<Option<(String, String)>> {
+pub fn cred_get_with_backend(
+    provider: String,
+    cred_type: String,
+) -> Result<Option<(String, String)>> {
     let name = cred_keyring_name(&provider, &cred_type);
     Ok(store_get(SERVICE_NAME, &name)?.map(|(v, backend)| (v, backend.as_str().to_string())))
 }
 
 /// Returns only the last 3 characters of a credential, masked.
 #[tauri::command]
-pub fn cred_get_masked(provider: String, cred_type: String, profile_id: Option<i64>) -> Result<Option<String>> {
+pub fn cred_get_masked(
+    provider: String,
+    cred_type: String,
+    profile_id: Option<i64>,
+) -> Result<Option<String>> {
     let name = cred_keyring_name(&provider, &cred_type);
     let raw = if let Some(pid) = profile_id {
         profile_store_get(pid, SERVICE_NAME, &name)?.map(|(v, _)| v)
@@ -71,7 +77,12 @@ pub fn cred_get_masked(provider: String, cred_type: String, profile_id: Option<i
 // ── Per-profile credential commands ─────────────────────────────────────
 
 #[tauri::command]
-pub fn cred_save_profile(provider: String, cred_type: String, value: String, profile_id: i64) -> Result<()> {
+pub fn cred_save_profile(
+    provider: String,
+    cred_type: String,
+    value: String,
+    profile_id: i64,
+) -> Result<()> {
     let name = cred_keyring_name(&provider, &cred_type);
     profile_store_set(profile_id, SERVICE_NAME, &name, &value)?;
     Ok(())
@@ -84,35 +95,64 @@ pub fn cred_delete_profile(provider: String, cred_type: String, profile_id: i64)
 }
 
 #[tauri::command]
-pub fn cred_get_profile(provider: String, cred_type: String, profile_id: i64) -> Result<Option<String>> {
+pub fn cred_get_profile(
+    provider: String,
+    cred_type: String,
+    profile_id: i64,
+) -> Result<Option<String>> {
     let name = cred_keyring_name(&provider, &cred_type);
     Ok(profile_store_get(profile_id, SERVICE_NAME, &name)?.map(|(v, _)| v))
 }
 
 #[tauri::command]
-pub fn cred_get_with_backend_profile(provider: String, cred_type: String, profile_id: i64) -> Result<Option<(String, String)>> {
+pub fn cred_get_with_backend_profile(
+    provider: String,
+    cred_type: String,
+    profile_id: i64,
+) -> Result<Option<(String, String)>> {
     let name = cred_keyring_name(&provider, &cred_type);
-    Ok(profile_store_get(profile_id, SERVICE_NAME, &name)?.map(|(v, backend)| (v, backend.as_str().to_string())))
+    Ok(profile_store_get(profile_id, SERVICE_NAME, &name)?
+        .map(|(v, backend)| (v, backend.as_str().to_string())))
 }
 
 #[tauri::command]
 pub fn key_list_status_profile(profile_id: i64) -> Result<Vec<KeyStatus>> {
     let providers = [
-        "openai", "openai-codex", "anthropic", "google", "ollama",
-        "groq", "openrouter", "mistral", "together", "deepseek", "xai",
+        "openai",
+        "openai-codex",
+        "anthropic",
+        "google",
+        "ollama",
+        "groq",
+        "openrouter",
+        "mistral",
+        "together",
+        "deepseek",
+        "xai",
     ];
-    let statuses = providers.iter().map(|p| {
-        let cred_name = cred_keyring_name(p, "api_key");
-        // Check: profile-scoped cred format, then profile-scoped legacy, then global cred format, then global legacy
-        let backend = profile_store_backend(profile_id, SERVICE_NAME, &cred_name)
-            .or_else(|| profile_store_backend(profile_id, SERVICE_NAME, p))
-            .or_else(|| store_backend(SERVICE_NAME, &cred_name))
-            .or_else(|| store_backend(SERVICE_NAME, p));
-        match backend {
-            Some(b) => KeyStatus { provider: p.to_string(), exists: true, backend: b.as_str().to_string() },
-            None => KeyStatus { provider: p.to_string(), exists: false, backend: "none".to_string() },
-        }
-    }).collect();
+    let statuses = providers
+        .iter()
+        .map(|p| {
+            let cred_name = cred_keyring_name(p, "api_key");
+            // Check: profile-scoped cred format, then profile-scoped legacy, then global cred format, then global legacy
+            let backend = profile_store_backend(profile_id, SERVICE_NAME, &cred_name)
+                .or_else(|| profile_store_backend(profile_id, SERVICE_NAME, p))
+                .or_else(|| store_backend(SERVICE_NAME, &cred_name))
+                .or_else(|| store_backend(SERVICE_NAME, p));
+            match backend {
+                Some(b) => KeyStatus {
+                    provider: p.to_string(),
+                    exists: true,
+                    backend: b.as_str().to_string(),
+                },
+                None => KeyStatus {
+                    provider: p.to_string(),
+                    exists: false,
+                    backend: "none".to_string(),
+                },
+            }
+        })
+        .collect();
     Ok(statuses)
 }
 
@@ -152,7 +192,8 @@ async fn test_provider_key(provider: &str, key: &str) -> Result<bool> {
             let resp = client
                 .get("https://api.openai.com/v1/models")
                 .header("Authorization", format!("Bearer {key}"))
-                .send().await;
+                .send()
+                .await;
             resp.map(|r| r.status().is_success()).unwrap_or(false)
         }
         "anthropic" => {
@@ -160,17 +201,25 @@ async fn test_provider_key(provider: &str, key: &str) -> Result<bool> {
                 .get("https://api.anthropic.com/v1/models")
                 .header("x-api-key", key)
                 .header("anthropic-version", "2023-06-01")
-                .send().await;
+                .send()
+                .await;
             resp.map(|r| r.status().is_success()).unwrap_or(false)
         }
         "google" => {
             let resp = client
-                .get(format!("https://generativelanguage.googleapis.com/v1beta/models?key={key}"))
-                .send().await;
+                .get(format!(
+                    "https://generativelanguage.googleapis.com/v1beta/models?key={key}"
+                ))
+                .send()
+                .await;
             resp.map(|r| r.status().is_success()).unwrap_or(false)
         }
         "ollama" => {
-            let base = if key.starts_with("http") { key.to_string() } else { "http://localhost:11434".to_string() };
+            let base = if key.starts_with("http") {
+                key.to_string()
+            } else {
+                "http://localhost:11434".to_string()
+            };
             let resp = client.get(format!("{base}/api/tags")).send().await;
             resp.map(|r| r.status().is_success()).unwrap_or(false)
         }
@@ -178,42 +227,48 @@ async fn test_provider_key(provider: &str, key: &str) -> Result<bool> {
             let resp = client
                 .get("https://api.groq.com/openai/v1/models")
                 .header("Authorization", format!("Bearer {key}"))
-                .send().await;
+                .send()
+                .await;
             resp.map(|r| r.status().is_success()).unwrap_or(false)
         }
         "mistral" => {
             let resp = client
                 .get("https://api.mistral.ai/v1/models")
                 .header("Authorization", format!("Bearer {key}"))
-                .send().await;
+                .send()
+                .await;
             resp.map(|r| r.status().is_success()).unwrap_or(false)
         }
         "xai" => {
             let resp = client
                 .get("https://api.x.ai/v1/models")
                 .header("Authorization", format!("Bearer {key}"))
-                .send().await;
+                .send()
+                .await;
             resp.map(|r| r.status().is_success()).unwrap_or(false)
         }
         "deepseek" => {
             let resp = client
                 .get("https://api.deepseek.com/models")
                 .header("Authorization", format!("Bearer {key}"))
-                .send().await;
+                .send()
+                .await;
             resp.map(|r| r.status().is_success()).unwrap_or(false)
         }
         "together" => {
             let resp = client
                 .get("https://api.together.xyz/v1/models")
                 .header("Authorization", format!("Bearer {key}"))
-                .send().await;
+                .send()
+                .await;
             resp.map(|r| r.status().is_success()).unwrap_or(false)
         }
         "openrouter" => {
             let resp = client
                 .get("https://openrouter.ai/api/v1/models")
                 .header("Authorization", format!("Bearer {key}"))
-                .send().await;
+                .send()
+                .await;
             resp.map(|r| r.status().is_success()).unwrap_or(false)
         }
         "openai-azure" => {
@@ -225,10 +280,7 @@ async fn test_provider_key(provider: &str, key: &str) -> Result<bool> {
                     false
                 } else {
                     let url = format!("{endpoint}/openai/models?api-version=2024-06-01");
-                    let resp = client
-                        .get(&url)
-                        .header("api-key", api_key)
-                        .send().await;
+                    let resp = client.get(&url).header("api-key", api_key).send().await;
                     resp.map(|r| r.status().is_success()).unwrap_or(false)
                 }
             } else {
@@ -278,18 +330,38 @@ pub async fn key_test_profile(provider: String, profile_id: i64) -> Result<bool>
 #[tauri::command]
 pub fn key_list_status() -> Result<Vec<KeyStatus>> {
     let providers = [
-        "openai", "openai-codex", "anthropic", "google", "ollama",
-        "groq", "openrouter", "mistral", "together", "deepseek", "xai",
+        "openai",
+        "openai-codex",
+        "anthropic",
+        "google",
+        "ollama",
+        "groq",
+        "openrouter",
+        "mistral",
+        "together",
+        "deepseek",
+        "xai",
     ];
-    let statuses = providers.iter().map(|p| {
-        let cred_name = cred_keyring_name(p, "api_key");
-        let backend = store_backend(SERVICE_NAME, &cred_name)
-            .or_else(|| store_backend(SERVICE_NAME, p));
-        match backend {
-            Some(b) => KeyStatus { provider: p.to_string(), exists: true, backend: b.as_str().to_string() },
-            None => KeyStatus { provider: p.to_string(), exists: false, backend: "none".to_string() },
-        }
-    }).collect();
+    let statuses = providers
+        .iter()
+        .map(|p| {
+            let cred_name = cred_keyring_name(p, "api_key");
+            let backend =
+                store_backend(SERVICE_NAME, &cred_name).or_else(|| store_backend(SERVICE_NAME, p));
+            match backend {
+                Some(b) => KeyStatus {
+                    provider: p.to_string(),
+                    exists: true,
+                    backend: b.as_str().to_string(),
+                },
+                None => KeyStatus {
+                    provider: p.to_string(),
+                    exists: false,
+                    backend: "none".to_string(),
+                },
+            }
+        })
+        .collect();
     Ok(statuses)
 }
 
@@ -297,7 +369,10 @@ pub fn key_list_status() -> Result<Vec<KeyStatus>> {
 pub fn settings_get(key: String, db: State<Db>) -> Result<serde_json::Value> {
     let db = db.lock().map_err(|_| AtelierError::internal("lock"))?;
     // Settings stored in a simple key-value table (created lazily)
-    db.execute_batch("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)").ok();
+    db.execute_batch(
+        "CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+    )
+    .ok();
     let result: rusqlite::Result<String> = db.query_row(
         "SELECT value FROM app_settings WHERE key = ?1",
         [&key],
@@ -314,7 +389,8 @@ pub fn settings_get(key: String, db: State<Db>) -> Result<serde_json::Value> {
 pub fn factory_reset(db: State<Db>) -> Result<()> {
     // Drop all data from all tables (order matters for FK constraints).
     let conn = db.lock().map_err(|_| AtelierError::internal("lock"))?;
-    conn.execute_batch("
+    conn.execute_batch(
+        "
         DELETE FROM tool_calls;
         DELETE FROM citations;
         DELETE FROM saved_documents;
@@ -326,7 +402,9 @@ pub fn factory_reset(db: State<Db>) -> Result<()> {
         DELETE FROM workspaces;
         DELETE FROM window_state;
         DELETE FROM profiles;
-    ").map_err(|e| AtelierError::db(format!("Reset failed: {e}")))?;
+    ",
+    )
+    .map_err(|e| AtelierError::db(format!("Reset failed: {e}")))?;
 
     // Clear app_settings if table exists.
     conn.execute_batch("DELETE FROM app_settings;").ok();
@@ -345,7 +423,10 @@ pub fn factory_reset(db: State<Db>) -> Result<()> {
 #[tauri::command]
 pub fn settings_set(key: String, value: serde_json::Value, db: State<Db>) -> Result<()> {
     let db = db.lock().map_err(|_| AtelierError::internal("lock"))?;
-    db.execute_batch("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)").ok();
+    db.execute_batch(
+        "CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+    )
+    .ok();
     let v = serde_json::to_string(&value)?;
     db.execute(
         "INSERT INTO app_settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",

@@ -1,9 +1,9 @@
+use crate::error::{AtelierError, Result};
+use once_cell::sync::Lazy;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::RwLock;
-use once_cell::sync::Lazy;
-use serde::{Deserialize, Serialize};
-use crate::error::{AtelierError, Result};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PermissionLevel {
@@ -28,13 +28,11 @@ pub struct PermissionConfig {
     pub providers: HashMap<String, ProviderPermission>,
 }
 
-pub(crate) static CONFIG: Lazy<RwLock<PermissionConfig>> = Lazy::new(|| {
-    RwLock::new(default_config())
-});
+pub(crate) static CONFIG: Lazy<RwLock<PermissionConfig>> =
+    Lazy::new(|| RwLock::new(default_config()));
 
-static ACTIVE_LEVELS: Lazy<RwLock<HashMap<String, String>>> = Lazy::new(|| {
-    RwLock::new(HashMap::new())
-});
+static ACTIVE_LEVELS: Lazy<RwLock<HashMap<String, String>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
 
 const BUNDLED_CONFIG: &str = include_str!("../../resources/config/llm-permissions.json");
 
@@ -43,11 +41,14 @@ fn default_config() -> PermissionConfig {
         version: 1,
         levels: {
             let mut m = HashMap::new();
-            m.insert("chat_only".into(), PermissionLevel {
-                label: "Chat Only".into(),
-                description: "LLM can only send messages. No file operations.".into(),
-                allowed_triggers: vec!["MESSAGE".into()],
-            });
+            m.insert(
+                "chat_only".into(),
+                PermissionLevel {
+                    label: "Chat Only".into(),
+                    description: "LLM can only send messages. No file operations.".into(),
+                    allowed_triggers: vec!["MESSAGE".into()],
+                },
+            );
             m
         },
         providers: HashMap::new(),
@@ -55,8 +56,9 @@ fn default_config() -> PermissionConfig {
 }
 
 pub fn load_config_from_str(json: &str) -> Result<PermissionConfig> {
-    let config: PermissionConfig = serde_json::from_str(json)
-        .map_err(|e| AtelierError::internal(format!("Failed to parse llm-permissions.json: {e}")))?;
+    let config: PermissionConfig = serde_json::from_str(json).map_err(|e| {
+        AtelierError::internal(format!("Failed to parse llm-permissions.json: {e}"))
+    })?;
 
     for (provider_id, provider) in &config.providers {
         for level_id in &provider.available_levels {
@@ -98,18 +100,24 @@ pub fn load_config(resource_path: &Path) -> Result<()> {
 
     let config = load_config_from_str(&json)?;
 
-    let mut guard = CONFIG.write().map_err(|_| AtelierError::internal("config lock poisoned"))?;
+    let mut guard = CONFIG
+        .write()
+        .map_err(|_| AtelierError::internal("config lock poisoned"))?;
     *guard = config;
     Ok(())
 }
 
 pub fn get_config() -> Result<PermissionConfig> {
-    let guard = CONFIG.read().map_err(|_| AtelierError::internal("config lock poisoned"))?;
+    let guard = CONFIG
+        .read()
+        .map_err(|_| AtelierError::internal("config lock poisoned"))?;
     Ok(guard.clone())
 }
 
 pub fn get_level_for_provider(provider: &str) -> Result<String> {
-    let active = ACTIVE_LEVELS.read().map_err(|_| AtelierError::internal("lock"))?;
+    let active = ACTIVE_LEVELS
+        .read()
+        .map_err(|_| AtelierError::internal("lock"))?;
     if let Some(level) = active.get(provider) {
         return Ok(level.clone());
     }
@@ -125,18 +133,22 @@ pub fn get_level_for_provider(provider: &str) -> Result<String> {
 pub fn set_level_for_provider(provider: &str, level: &str) -> Result<Vec<String>> {
     let config = get_config()?;
 
-    let level_def = config.levels.get(level)
+    let level_def = config
+        .levels
+        .get(level)
         .ok_or_else(|| AtelierError::internal(format!("Unknown permission level: {level}")))?;
 
     if let Some(p) = config.providers.get(provider) {
         if !p.available_levels.contains(&level.to_string()) {
-            return Err(AtelierError::internal(
-                format!("Level '{level}' not available for provider '{provider}'")
-            ));
+            return Err(AtelierError::internal(format!(
+                "Level '{level}' not available for provider '{provider}'"
+            )));
         }
     }
 
-    let mut active = ACTIVE_LEVELS.write().map_err(|_| AtelierError::internal("lock"))?;
+    let mut active = ACTIVE_LEVELS
+        .write()
+        .map_err(|_| AtelierError::internal("lock"))?;
     active.insert(provider.to_string(), level.to_string());
 
     Ok(level_def.allowed_triggers.clone())
@@ -262,6 +274,9 @@ mod tests {
 
         let config = get_config().unwrap();
         assert_eq!(config.version, 1);
-        assert!(config.providers.contains_key("openai"), "should have loaded the real bundled providers, not the minimal hardcoded fallback");
+        assert!(
+            config.providers.contains_key("openai"),
+            "should have loaded the real bundled providers, not the minimal hardcoded fallback"
+        );
     }
 }

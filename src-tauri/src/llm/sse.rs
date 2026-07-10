@@ -75,7 +75,10 @@ mod tests {
     fn rewrites_reqwest_decode_error_into_actionable_message() {
         let msg = friendly_stream_error("error decoding response body");
         assert!(msg.contains("try again"));
-        assert!(msg.contains("error decoding response body"), "should keep the raw detail for troubleshooting");
+        assert!(
+            msg.contains("error decoding response body"),
+            "should keep the raw detail for troubleshooting"
+        );
     }
 
     #[test]
@@ -102,10 +105,16 @@ mod tests {
         let mut buf = LineBuffer::new();
         // A single SSE event's JSON body split across two chunks.
         let first = buf.push_chunk(b"data: {\"choices\":[{\"delta\":{\"content\":\"Bon");
-        assert!(first.is_empty(), "no complete line yet, nothing should be emitted early");
+        assert!(
+            first.is_empty(),
+            "no complete line yet, nothing should be emitted early"
+        );
 
         let second = buf.push_chunk(b"jour\"}}]}\n");
-        assert_eq!(second, vec![r#"data: {"choices":[{"delta":{"content":"Bonjour"}}]}"#]);
+        assert_eq!(
+            second,
+            vec![r#"data: {"choices":[{"delta":{"content":"Bonjour"}}]}"#]
+        );
     }
 
     #[test]
@@ -128,7 +137,7 @@ mod tests {
     fn does_not_corrupt_a_multibyte_utf8_char_split_across_chunks() {
         let mut buf = LineBuffer::new();
         let full = "data: caf\u{e9} done\n".as_bytes().to_vec(); // "café"
-        // Split right in the middle of the 2-byte 'é' sequence.
+                                                                 // Split right in the middle of the 2-byte 'é' sequence.
         let split_at = full.iter().position(|&b| b == b'f').unwrap() + 2; // mid 'é'
         let first = buf.push_chunk(&full[..split_at]);
         assert!(first.is_empty());

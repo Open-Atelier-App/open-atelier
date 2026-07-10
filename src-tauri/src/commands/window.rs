@@ -1,5 +1,5 @@
-use tauri::{AppHandle, Manager};
 use crate::error::{AtelierError, ErrorCode, Result};
+use tauri::{AppHandle, Manager};
 
 /// Returns platform info for conditional UI features.
 #[tauri::command]
@@ -27,11 +27,19 @@ pub fn diagnostic_report(app: AppHandle) -> Result<String> {
     let mut report = String::new();
     report.push_str(&format!("Open Atelier {}\n", app.package_info().version));
     report.push_str(&format!("Commit: {}\n", env!("ATELIER_GIT_COMMIT")));
-    report.push_str(&format!("OS: {} ({})\n", std::env::consts::OS, std::env::consts::ARCH));
+    report.push_str(&format!(
+        "OS: {} ({})\n",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    ));
     report.push_str("\n--- Recent log output ---\n");
 
-    let log_dir = app.path().app_log_dir()
-        .map_err(|e| AtelierError::new(ErrorCode::IoError, format!("Cannot resolve log directory: {e}")))?;
+    let log_dir = app.path().app_log_dir().map_err(|e| {
+        AtelierError::new(
+            ErrorCode::IoError,
+            format!("Cannot resolve log directory: {e}"),
+        )
+    })?;
     let log_path = log_dir.join(format!("{}.log", app.package_info().name));
 
     match std::fs::read(&log_path) {
@@ -44,7 +52,10 @@ pub fn diagnostic_report(app: AppHandle) -> Result<String> {
             report.push_str(&tail);
         }
         Err(e) => {
-            report.push_str(&format!("(no log file yet at {}: {e})\n", log_path.display()));
+            report.push_str(&format!(
+                "(no log file yet at {}: {e})\n",
+                log_path.display()
+            ));
         }
     }
 
@@ -53,7 +64,6 @@ pub fn diagnostic_report(app: AppHandle) -> Result<String> {
 
 #[tauri::command]
 pub fn open_path(path: String) -> Result<()> {
-    open::that(&path)
-        .map_err(|e| AtelierError::io(format!("Failed to open path: {e}")))?;
+    open::that(&path).map_err(|e| AtelierError::io(format!("Failed to open path: {e}")))?;
     Ok(())
 }

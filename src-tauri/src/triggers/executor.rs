@@ -1,9 +1,9 @@
-use std::fs;
-use std::path::{Path, PathBuf};
-use serde::Serialize;
-use crate::llm::permissions;
 use super::parser::ParsedTrigger;
 use super::snapshot::SnapshotStore;
+use crate::llm::permissions;
+use serde::Serialize;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 const BINARY_CHECK_SIZE: usize = 8192;
 
@@ -47,7 +47,8 @@ fn validate_path(workspace_root: &str, rel_path: &str) -> std::result::Result<Pa
     } else {
         let parent = target.parent().unwrap_or(&target);
         if parent.exists() {
-            let canonical_parent = parent.canonicalize()
+            let canonical_parent = parent
+                .canonicalize()
                 .map_err(|e| format!("Cannot resolve parent: {e}"))?;
             if !canonical_parent.starts_with(&root) {
                 return Err(format!("Path outside workspace boundary: {rel_path}"));
@@ -110,11 +111,20 @@ pub fn execute_batch(
             continue;
         }
 
-        let result = execute_single(trigger, workspace_path, conversation_id, snapshots, &mut content_responses);
+        let result = execute_single(
+            trigger,
+            workspace_path,
+            conversation_id,
+            snapshots,
+            &mut content_responses,
+        );
         results.push(result);
     }
 
-    ExecutionResult { results, content_responses }
+    ExecutionResult {
+        results,
+        content_responses,
+    }
 }
 
 fn execute_single(
@@ -134,10 +144,34 @@ fn execute_single(
         "READ" => exec_read(trigger, workspace_path, content_responses),
         "RENAME" => exec_rename(trigger, workspace_path, conversation_id, snapshots),
         "LIST" => exec_list(trigger, workspace_path, content_responses),
-        "CREATE_DOCX" => exec_create_office(trigger, workspace_path, conversation_id, snapshots, super::office::build_docx),
-        "CREATE_XLSX" => exec_create_office(trigger, workspace_path, conversation_id, snapshots, super::office::build_xlsx),
-        "CREATE_PPTX" => exec_create_office(trigger, workspace_path, conversation_id, snapshots, super::office::build_pptx),
-        "CREATE_MP3" => exec_create_office(trigger, workspace_path, conversation_id, snapshots, super::tts::text_to_mp3),
+        "CREATE_DOCX" => exec_create_office(
+            trigger,
+            workspace_path,
+            conversation_id,
+            snapshots,
+            super::office::build_docx,
+        ),
+        "CREATE_XLSX" => exec_create_office(
+            trigger,
+            workspace_path,
+            conversation_id,
+            snapshots,
+            super::office::build_xlsx,
+        ),
+        "CREATE_PPTX" => exec_create_office(
+            trigger,
+            workspace_path,
+            conversation_id,
+            snapshots,
+            super::office::build_pptx,
+        ),
+        "CREATE_MP3" => exec_create_office(
+            trigger,
+            workspace_path,
+            conversation_id,
+            snapshots,
+            super::tts::text_to_mp3,
+        ),
         "EXPORT_PDF" => exec_export_pdf(trigger, workspace_path, conversation_id, snapshots),
         _ => TriggerResult {
             action: trigger.action.clone(),
@@ -160,12 +194,20 @@ fn exec_create(t: &ParsedTrigger, ws: &str, conv_id: i64, snaps: &SnapshotStore)
     };
 
     if target.exists() {
-        return warn_with_path(&t.action, &format!("File already exists: {rel_path} (use WRITE or APPEND to modify it)"), rel_path);
+        return warn_with_path(
+            &t.action,
+            &format!("File already exists: {rel_path} (use WRITE or APPEND to modify it)"),
+            rel_path,
+        );
     }
 
     if let Some(parent) = target.parent() {
         if let Err(e) = fs::create_dir_all(parent) {
-            return fail_with_path(&t.action, &format!("Cannot create directory: {e}"), rel_path);
+            return fail_with_path(
+                &t.action,
+                &format!("Cannot create directory: {e}"),
+                rel_path,
+            );
         }
     }
 
@@ -209,7 +251,11 @@ fn exec_create_office(
 
     if let Some(parent) = target.parent() {
         if let Err(e) = fs::create_dir_all(parent) {
-            return fail_with_path(&t.action, &format!("Cannot create directory: {e}"), rel_path);
+            return fail_with_path(
+                &t.action,
+                &format!("Cannot create directory: {e}"),
+                rel_path,
+            );
         }
     }
 
@@ -224,7 +270,11 @@ fn exec_create_office(
         return fail_with_path(&t.action, &format!("Cannot write file: {e}"), rel_path);
     }
 
-    ok_with_detail(&t.action, rel_path, format!("{} bytes written", bytes.len()))
+    ok_with_detail(
+        &t.action,
+        rel_path,
+        format!("{} bytes written", bytes.len()),
+    )
 }
 
 /// Renders an existing HTML file already on disk to a real PDF at a second
@@ -233,7 +283,12 @@ fn exec_create_office(
 /// you already wrote" — re-pasting a whole HTML document's markup into a
 /// trigger parameter just to convert it would duplicate potentially large
 /// content for no reason.
-fn exec_export_pdf(t: &ParsedTrigger, ws: &str, conv_id: i64, snaps: &SnapshotStore) -> TriggerResult {
+fn exec_export_pdf(
+    t: &ParsedTrigger,
+    ws: &str,
+    conv_id: i64,
+    snaps: &SnapshotStore,
+) -> TriggerResult {
     let source_path = match t.params.first() {
         Some(p) => p,
         None => return fail(&t.action, "Missing source HTML path parameter"),
@@ -250,12 +305,22 @@ fn exec_export_pdf(t: &ParsedTrigger, ws: &str, conv_id: i64, snaps: &SnapshotSt
     };
 
     if !source_target.exists() {
-        return fail_with_path(&t.action, &format!("File not found: {source_path}"), source_path);
+        return fail_with_path(
+            &t.action,
+            &format!("File not found: {source_path}"),
+            source_path,
+        );
     }
 
     let html = match fs::read_to_string(&source_target) {
         Ok(s) => s,
-        Err(e) => return fail_with_path(&t.action, &format!("Cannot read {source_path}: {e}"), source_path),
+        Err(e) => {
+            return fail_with_path(
+                &t.action,
+                &format!("Cannot read {source_path}: {e}"),
+                source_path,
+            )
+        }
     };
 
     let output_target = match validate_path(ws, output_path) {
@@ -265,7 +330,11 @@ fn exec_export_pdf(t: &ParsedTrigger, ws: &str, conv_id: i64, snaps: &SnapshotSt
 
     if let Some(parent) = output_target.parent() {
         if let Err(e) = fs::create_dir_all(parent) {
-            return fail_with_path(&t.action, &format!("Cannot create directory: {e}"), output_path);
+            return fail_with_path(
+                &t.action,
+                &format!("Cannot create directory: {e}"),
+                output_path,
+            );
         }
     }
 
@@ -280,7 +349,11 @@ fn exec_export_pdf(t: &ParsedTrigger, ws: &str, conv_id: i64, snaps: &SnapshotSt
         return fail_with_path(&t.action, &format!("Cannot write file: {e}"), output_path);
     }
 
-    ok_with_detail(&t.action, output_path, format!("{} bytes written from {source_path}", bytes.len()))
+    ok_with_detail(
+        &t.action,
+        output_path,
+        format!("{} bytes written from {source_path}", bytes.len()),
+    )
 }
 
 fn exec_delete(t: &ParsedTrigger, ws: &str, conv_id: i64, snaps: &SnapshotStore) -> TriggerResult {
@@ -330,7 +403,11 @@ fn exec_write(t: &ParsedTrigger, ws: &str, conv_id: i64, snaps: &SnapshotStore) 
     // Create parent dirs if needed
     if let Some(parent) = target.parent() {
         if let Err(e) = fs::create_dir_all(parent) {
-            return fail_with_path(&t.action, &format!("Cannot create directory: {e}"), rel_path);
+            return fail_with_path(
+                &t.action,
+                &format!("Cannot create directory: {e}"),
+                rel_path,
+            );
         }
     }
 
@@ -340,7 +417,15 @@ fn exec_write(t: &ParsedTrigger, ws: &str, conv_id: i64, snaps: &SnapshotStore) 
         return fail_with_path(&t.action, &format!("Cannot write file: {e}"), rel_path);
     }
 
-    ok_with_detail(&t.action, rel_path, format!("{} lines, {} bytes written", content.lines().count(), content.len()))
+    ok_with_detail(
+        &t.action,
+        rel_path,
+        format!(
+            "{} lines, {} bytes written",
+            content.lines().count(),
+            content.len()
+        ),
+    )
 }
 
 fn exec_insert(t: &ParsedTrigger, ws: &str, conv_id: i64, snaps: &SnapshotStore) -> TriggerResult {
@@ -399,7 +484,14 @@ fn exec_insert(t: &ParsedTrigger, ws: &str, conv_id: i64, snaps: &SnapshotStore)
         return fail_with_path(&t.action, &format!("Cannot write file: {e}"), rel_path);
     }
 
-    ok_with_detail(&t.action, rel_path, format!("Inserted {} line(s) at line {line_num}", content_lines.len()))
+    ok_with_detail(
+        &t.action,
+        rel_path,
+        format!(
+            "Inserted {} line(s) at line {line_num}",
+            content_lines.len()
+        ),
+    )
 }
 
 fn exec_append(t: &ParsedTrigger, ws: &str, conv_id: i64, snaps: &SnapshotStore) -> TriggerResult {
@@ -438,7 +530,11 @@ fn exec_append(t: &ParsedTrigger, ws: &str, conv_id: i64, snaps: &SnapshotStore)
         return fail_with_path(&t.action, &format!("Cannot write file: {e}"), rel_path);
     }
 
-    ok_with_detail(&t.action, rel_path, format!("Appended {} bytes", content.len()))
+    ok_with_detail(
+        &t.action,
+        rel_path,
+        format!("Appended {} bytes", content.len()),
+    )
 }
 
 fn exec_preview(t: &ParsedTrigger, ws: &str) -> TriggerResult {
@@ -476,7 +572,11 @@ fn exec_read(t: &ParsedTrigger, ws: &str, responses: &mut Vec<ContentResponse>) 
     }
 
     if is_binary(&target) {
-        return fail_with_path(&t.action, &format!("Cannot read binary file: {rel_path}"), rel_path);
+        return fail_with_path(
+            &t.action,
+            &format!("Cannot read binary file: {rel_path}"),
+            rel_path,
+        );
     }
 
     match fs::read_to_string(&target) {
@@ -518,12 +618,20 @@ fn exec_rename(t: &ParsedTrigger, ws: &str, conv_id: i64, snaps: &SnapshotStore)
     }
 
     if new_target.exists() {
-        return fail_with_path(&t.action, &format!("File already exists: {new_path}"), new_path);
+        return fail_with_path(
+            &t.action,
+            &format!("File already exists: {new_path}"),
+            new_path,
+        );
     }
 
     if let Some(parent) = new_target.parent() {
         if let Err(e) = fs::create_dir_all(parent) {
-            return fail_with_path(&t.action, &format!("Cannot create directory: {e}"), new_path);
+            return fail_with_path(
+                &t.action,
+                &format!("Cannot create directory: {e}"),
+                new_path,
+            );
         }
     }
 
@@ -562,7 +670,11 @@ fn exec_list(t: &ParsedTrigger, ws: &str, responses: &mut Vec<ContentResponse>) 
     };
 
     if !target.exists() || !target.is_dir() {
-        return fail_with_path(&t.action, &format!("Directory not found: {dir_path}"), dir_path);
+        return fail_with_path(
+            &t.action,
+            &format!("Directory not found: {dir_path}"),
+            dir_path,
+        );
     }
 
     match fs::read_dir(&target) {
@@ -665,16 +777,25 @@ mod tests {
         let ws = temp_workspace();
         let snaps = SnapshotStore::new();
 
-        let parsed = parser::parse(&format!(
+        let parsed = parser::parse(
             r#">>>[CREATE "test.txt"]<<<
->>>[WRITE "test.txt" "hello world"]<<<"#
-        ));
+>>>[WRITE "test.txt" "hello world"]<<<"#,
+        );
 
-        let result = execute_batch(&parsed.triggers, ws.to_str().unwrap(), "full_access", 1, &snaps);
+        let result = execute_batch(
+            &parsed.triggers,
+            ws.to_str().unwrap(),
+            "full_access",
+            1,
+            &snaps,
+        );
         assert_eq!(result.results.len(), 2);
         assert_eq!(result.results[0].status, "OK");
         assert_eq!(result.results[1].status, "OK");
-        assert_eq!(fs::read_to_string(ws.join("test.txt")).unwrap(), "hello world");
+        assert_eq!(
+            fs::read_to_string(ws.join("test.txt")).unwrap(),
+            "hello world"
+        );
 
         fs::remove_dir_all(&ws).ok();
     }
@@ -686,7 +807,13 @@ mod tests {
         let snaps = SnapshotStore::new();
 
         let parsed = parser::parse(r#">>>[CREATE "test.txt"]<<<"#);
-        let result = execute_batch(&parsed.triggers, ws.to_str().unwrap(), "chat_only", 1, &snaps);
+        let result = execute_batch(
+            &parsed.triggers,
+            ws.to_str().unwrap(),
+            "chat_only",
+            1,
+            &snaps,
+        );
         assert_eq!(result.results[0].status, "FAIL");
         assert!(result.results[0].detail.contains("Permission denied"));
 
@@ -702,7 +829,13 @@ mod tests {
         fs::write(ws.join("data.txt"), "file content").unwrap();
 
         let parsed = parser::parse(r#">>>[READ "data.txt"]<<<"#);
-        let result = execute_batch(&parsed.triggers, ws.to_str().unwrap(), "full_access", 1, &snaps);
+        let result = execute_batch(
+            &parsed.triggers,
+            ws.to_str().unwrap(),
+            "full_access",
+            1,
+            &snaps,
+        );
         assert_eq!(result.results[0].status, "OK");
         assert_eq!(result.content_responses.len(), 1);
         assert_eq!(result.content_responses[0].content, "file content");
@@ -717,7 +850,13 @@ mod tests {
         let snaps = SnapshotStore::new();
 
         let parsed = parser::parse(r#">>>[DELETE "nope.txt"]<<<"#);
-        let result = execute_batch(&parsed.triggers, ws.to_str().unwrap(), "full_access", 1, &snaps);
+        let result = execute_batch(
+            &parsed.triggers,
+            ws.to_str().unwrap(),
+            "full_access",
+            1,
+            &snaps,
+        );
         assert_eq!(result.results[0].status, "FAIL");
         assert!(result.results[0].detail.contains("not found"));
 
@@ -733,7 +872,13 @@ mod tests {
         fs::write(ws.join("exists.txt"), "data").unwrap();
 
         let parsed = parser::parse(r#">>>[CREATE "exists.txt"]<<<"#);
-        let result = execute_batch(&parsed.triggers, ws.to_str().unwrap(), "full_access", 1, &snaps);
+        let result = execute_batch(
+            &parsed.triggers,
+            ws.to_str().unwrap(),
+            "full_access",
+            1,
+            &snaps,
+        );
         // Per llm-functions-v1.md, "CREATE a file to check if it exists" is a
         // documented, expected idiom (see the context.md protocol) — this is
         // not a real failure, so it shouldn't read as one.
@@ -756,7 +901,13 @@ mod tests {
         fs::create_dir(ws.join("subdir")).unwrap();
 
         let parsed = parser::parse(r#">>>[LIST "."]<<<"#);
-        let result = execute_batch(&parsed.triggers, ws.to_str().unwrap(), "full_access", 1, &snaps);
+        let result = execute_batch(
+            &parsed.triggers,
+            ws.to_str().unwrap(),
+            "full_access",
+            1,
+            &snaps,
+        );
         assert_eq!(result.results[0].status, "OK");
         assert_eq!(result.content_responses.len(), 1);
         let listing = &result.content_responses[0].content;
@@ -776,7 +927,13 @@ mod tests {
         fs::write(ws.join("file.txt"), "line1\nline2\nline3").unwrap();
 
         let parsed = parser::parse(r#">>>[INSERT "file.txt" "inserted" "2"]<<<"#);
-        let result = execute_batch(&parsed.triggers, ws.to_str().unwrap(), "full_access", 1, &snaps);
+        let result = execute_batch(
+            &parsed.triggers,
+            ws.to_str().unwrap(),
+            "full_access",
+            1,
+            &snaps,
+        );
         assert_eq!(result.results[0].status, "OK");
         let content = fs::read_to_string(ws.join("file.txt")).unwrap();
         assert_eq!(content, "line1\ninserted\nline2\nline3");
@@ -793,7 +950,13 @@ mod tests {
         fs::write(ws.join("file.txt"), "existing").unwrap();
 
         let parsed = parser::parse(r#">>>[APPEND "file.txt" "new stuff"]<<<"#);
-        let result = execute_batch(&parsed.triggers, ws.to_str().unwrap(), "full_access", 1, &snaps);
+        let result = execute_batch(
+            &parsed.triggers,
+            ws.to_str().unwrap(),
+            "full_access",
+            1,
+            &snaps,
+        );
         assert_eq!(result.results[0].status, "OK");
         let content = fs::read_to_string(ws.join("file.txt")).unwrap();
         assert_eq!(content, "existing\nnew stuff");
@@ -810,7 +973,13 @@ mod tests {
         fs::write(ws.join("old.txt"), "data").unwrap();
 
         let parsed = parser::parse(r#">>>[RENAME "old.txt" "new.txt"]<<<"#);
-        let result = execute_batch(&parsed.triggers, ws.to_str().unwrap(), "full_access", 1, &snaps);
+        let result = execute_batch(
+            &parsed.triggers,
+            ws.to_str().unwrap(),
+            "full_access",
+            1,
+            &snaps,
+        );
         assert_eq!(result.results[0].status, "OK");
         assert!(!ws.join("old.txt").exists());
         assert_eq!(fs::read_to_string(ws.join("new.txt")).unwrap(), "data");
@@ -825,7 +994,13 @@ mod tests {
         let snaps = SnapshotStore::new();
 
         let parsed = parser::parse(r##">>>[CREATE_DOCX "report.docx" "# Title\nBody text."]<<<"##);
-        let result = execute_batch(&parsed.triggers, ws.to_str().unwrap(), "full_access", 1, &snaps);
+        let result = execute_batch(
+            &parsed.triggers,
+            ws.to_str().unwrap(),
+            "full_access",
+            1,
+            &snaps,
+        );
         assert_eq!(result.results[0].status, "OK");
         let bytes = fs::read(ws.join("report.docx")).unwrap();
         assert_eq!(&bytes[0..4], b"PK\x03\x04");
@@ -840,7 +1015,13 @@ mod tests {
         let snaps = SnapshotStore::new();
 
         let parsed = parser::parse(r#">>>[CREATE_XLSX "data.xlsx" "Name,Age\nAlice,30"]<<<"#);
-        let result = execute_batch(&parsed.triggers, ws.to_str().unwrap(), "full_access", 1, &snaps);
+        let result = execute_batch(
+            &parsed.triggers,
+            ws.to_str().unwrap(),
+            "full_access",
+            1,
+            &snaps,
+        );
         assert_eq!(result.results[0].status, "OK");
         let bytes = fs::read(ws.join("data.xlsx")).unwrap();
         assert_eq!(&bytes[0..4], b"PK\x03\x04");
@@ -855,7 +1036,13 @@ mod tests {
         let snaps = SnapshotStore::new();
 
         let parsed = parser::parse(r##">>>[CREATE_PPTX "deck.pptx" "# Slide One\n- point a"]<<<"##);
-        let result = execute_batch(&parsed.triggers, ws.to_str().unwrap(), "full_access", 1, &snaps);
+        let result = execute_batch(
+            &parsed.triggers,
+            ws.to_str().unwrap(),
+            "full_access",
+            1,
+            &snaps,
+        );
         assert_eq!(result.results[0].status, "OK");
         let bytes = fs::read(ws.join("deck.pptx")).unwrap();
         assert_eq!(&bytes[0..4], b"PK\x03\x04");
@@ -872,7 +1059,13 @@ mod tests {
         fs::write(ws.join("report.docx"), "not a real docx yet").unwrap();
 
         let parsed = parser::parse(r##">>>[CREATE_DOCX "report.docx" "# Title"]<<<"##);
-        let result = execute_batch(&parsed.triggers, ws.to_str().unwrap(), "full_access", 1, &snaps);
+        let result = execute_batch(
+            &parsed.triggers,
+            ws.to_str().unwrap(),
+            "full_access",
+            1,
+            &snaps,
+        );
         assert_eq!(result.results[0].status, "OK");
         let bytes = fs::read(ws.join("report.docx")).unwrap();
         assert_eq!(&bytes[0..4], b"PK\x03\x04");
@@ -887,7 +1080,13 @@ mod tests {
         let snaps = SnapshotStore::new();
 
         let parsed = parser::parse(r#">>>[CREATE_MP3 "narration.mp3" "Hello from Atelier."]<<<"#);
-        let result = execute_batch(&parsed.triggers, ws.to_str().unwrap(), "full_access", 1, &snaps);
+        let result = execute_batch(
+            &parsed.triggers,
+            ws.to_str().unwrap(),
+            "full_access",
+            1,
+            &snaps,
+        );
 
         // Whether this succeeds depends on the OS TTS engine being present
         // (macOS always has `say`; Linux needs espeak-ng installed) — both
@@ -912,7 +1111,13 @@ mod tests {
         let snaps = SnapshotStore::new();
 
         let parsed = parser::parse(r#">>>[CREATE_XLSX "data.xlsx" "a,b\n1,2"]<<<"#);
-        let result = execute_batch(&parsed.triggers, ws.to_str().unwrap(), "chat_only", 1, &snaps);
+        let result = execute_batch(
+            &parsed.triggers,
+            ws.to_str().unwrap(),
+            "chat_only",
+            1,
+            &snaps,
+        );
         assert_eq!(result.results[0].status, "FAIL");
         assert!(result.results[0].detail.contains("Permission denied"));
 
@@ -925,10 +1130,20 @@ mod tests {
         let ws = temp_workspace();
         let snaps = SnapshotStore::new();
 
-        fs::write(ws.join("plan.html"), "<html><body><h1>Plan</h1></body></html>").unwrap();
+        fs::write(
+            ws.join("plan.html"),
+            "<html><body><h1>Plan</h1></body></html>",
+        )
+        .unwrap();
 
         let parsed = parser::parse(r#">>>[EXPORT_PDF "plan.html" "plan.pdf"]<<<"#);
-        let result = execute_batch(&parsed.triggers, ws.to_str().unwrap(), "full_access", 1, &snaps);
+        let result = execute_batch(
+            &parsed.triggers,
+            ws.to_str().unwrap(),
+            "full_access",
+            1,
+            &snaps,
+        );
         assert_eq!(result.results[0].status, "OK");
         let bytes = fs::read(ws.join("plan.pdf")).unwrap();
         assert_eq!(&bytes[0..5], b"%PDF-");
@@ -943,7 +1158,13 @@ mod tests {
         let snaps = SnapshotStore::new();
 
         let parsed = parser::parse(r#">>>[EXPORT_PDF "missing.html" "out.pdf"]<<<"#);
-        let result = execute_batch(&parsed.triggers, ws.to_str().unwrap(), "full_access", 1, &snaps);
+        let result = execute_batch(
+            &parsed.triggers,
+            ws.to_str().unwrap(),
+            "full_access",
+            1,
+            &snaps,
+        );
         assert_eq!(result.results[0].status, "FAIL");
         assert!(result.results[0].detail.contains("not found"));
 
@@ -959,7 +1180,13 @@ mod tests {
         fs::write(ws.join("plan.html"), "<html><body>Plan</body></html>").unwrap();
 
         let parsed = parser::parse(r#">>>[EXPORT_PDF "plan.html" "plan.pdf"]<<<"#);
-        let result = execute_batch(&parsed.triggers, ws.to_str().unwrap(), "chat_only", 1, &snaps);
+        let result = execute_batch(
+            &parsed.triggers,
+            ws.to_str().unwrap(),
+            "chat_only",
+            1,
+            &snaps,
+        );
         assert_eq!(result.results[0].status, "FAIL");
         assert!(result.results[0].detail.contains("Permission denied"));
 

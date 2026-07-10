@@ -6,8 +6,8 @@
 //! shelling out to an installed browser or wkhtmltopdf binary that may not
 //! exist on the user's machine.
 
-use std::collections::BTreeMap;
 use printpdf::{GeneratePdfOptions, PdfDocument, PdfSaveOptions};
+use std::collections::BTreeMap;
 
 pub fn html_to_pdf(html: &str) -> Result<Vec<u8>, String> {
     let images = BTreeMap::new();
@@ -33,7 +33,8 @@ mod tests {
 
     #[test]
     fn renders_simple_html_to_a_real_pdf() {
-        let bytes = html_to_pdf("<html><body><h1>Title</h1><p>Hello world.</p></body></html>").unwrap();
+        let bytes =
+            html_to_pdf("<html><body><h1>Title</h1><p>Hello world.</p></body></html>").unwrap();
         assert!(!bytes.is_empty());
         // PDF files start with a version header comment like "%PDF-1.7".
         assert_eq!(&bytes[0..5], b"%PDF-");

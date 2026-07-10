@@ -6,7 +6,7 @@
 //! always-on local trigger protocol.
 pub mod github;
 pub mod github_oauth;
-pub mod notion;
-pub mod slack;
 pub mod google_drive;
 pub mod google_oauth;
+pub mod notion;
+pub mod slack;

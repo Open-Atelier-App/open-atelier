@@ -1,8 +1,8 @@
-use std::fs;
-use tauri::State;
-use crate::db::{Db, now_ms};
+use crate::db::{now_ms, Db};
 use crate::error::{AtelierError, Result};
 use crate::models::Profile;
+use std::fs;
+use tauri::State;
 
 fn row_to_profile(row: &rusqlite::Row<'_>) -> rusqlite::Result<Profile> {
     Ok(Profile {
@@ -27,7 +27,12 @@ pub fn profile_list(db: State<Db>) -> Result<Vec<Profile>> {
 }
 
 #[tauri::command]
-pub fn profile_create(name: String, dir_name: String, root_path: String, db: State<Db>) -> Result<Profile> {
+pub fn profile_create(
+    name: String,
+    dir_name: String,
+    root_path: String,
+    db: State<Db>,
+) -> Result<Profile> {
     // Create directory on disk
     fs::create_dir_all(&root_path)
         .map_err(|e| AtelierError::io(format!("Cannot create directory {root_path}: {e}")))?;
@@ -57,13 +62,22 @@ pub fn profile_update(
 ) -> Result<Profile> {
     let db = db.lock().map_err(|_| AtelierError::internal("lock"))?;
     if let Some(n) = name {
-        db.execute("UPDATE profiles SET name = ?1 WHERE id = ?2", rusqlite::params![n, id])?;
+        db.execute(
+            "UPDATE profiles SET name = ?1 WHERE id = ?2",
+            rusqlite::params![n, id],
+        )?;
     }
     if let Some(d) = dir_name {
-        db.execute("UPDATE profiles SET dir_name = ?1 WHERE id = ?2", rusqlite::params![d, id])?;
+        db.execute(
+            "UPDATE profiles SET dir_name = ?1 WHERE id = ?2",
+            rusqlite::params![d, id],
+        )?;
     }
     if let Some(r) = root_path {
-        db.execute("UPDATE profiles SET root_path = ?1 WHERE id = ?2", rusqlite::params![r, id])?;
+        db.execute(
+            "UPDATE profiles SET root_path = ?1 WHERE id = ?2",
+            rusqlite::params![r, id],
+        )?;
     }
     let profile = db.query_row(
         "SELECT id, name, dir_name, root_path, created_at, last_active_at, is_active FROM profiles WHERE id = ?1",
@@ -86,11 +100,11 @@ pub fn profile_delete(id: i64, db: State<Db>) -> Result<()> {
         ));
     }
 
-    let profile_root: String = db.query_row(
-        "SELECT root_path FROM profiles WHERE id = ?1",
-        [id],
-        |r| r.get(0),
-    ).map_err(|_| AtelierError::not_found("Profile not found"))?;
+    let profile_root: String = db
+        .query_row("SELECT root_path FROM profiles WHERE id = ?1", [id], |r| {
+            r.get(0)
+        })
+        .map_err(|_| AtelierError::not_found("Profile not found"))?;
 
     // Cascade-delete workspace data.
     let ws_ids: Vec<i64> = {
@@ -134,7 +148,10 @@ pub fn profile_delete(id: i64, db: State<Db>) -> Result<()> {
 
     // Delete per-profile credentials if they exist.
     if let Some(data_dir) = dirs::data_dir() {
-        let cred_dir = data_dir.join("com.openatelier.app").join("credentials").join(id.to_string());
+        let cred_dir = data_dir
+            .join("com.openatelier.app")
+            .join("credentials")
+            .join(id.to_string());
         if cred_dir.exists() {
             fs::remove_dir_all(cred_dir).ok();
         }
@@ -148,7 +165,10 @@ pub fn profile_switch(id: i64, db: State<Db>) -> Result<Profile> {
     let now = now_ms();
     let db = db.lock().map_err(|_| AtelierError::internal("lock"))?;
     db.execute("UPDATE profiles SET is_active = 0", [])?;
-    db.execute("UPDATE profiles SET is_active = 1, last_active_at = ?1 WHERE id = ?2", rusqlite::params![now, id])?;
+    db.execute(
+        "UPDATE profiles SET is_active = 1, last_active_at = ?1 WHERE id = ?2",
+        rusqlite::params![now, id],
+    )?;
     let profile = db.query_row(
         "SELECT id, name, dir_name, root_path, created_at, last_active_at, is_active FROM profiles WHERE id = ?1",
         [id],
@@ -165,8 +185,12 @@ pub fn profile_recreate_dir(id: i64, db: State<Db>) -> Result<Profile> {
         [id],
         row_to_profile,
     ).map_err(|_| AtelierError::not_found("Profile not found"))?;
-    fs::create_dir_all(&profile.root_path)
-        .map_err(|e| AtelierError::io(format!("Cannot create directory {}: {e}", profile.root_path)))?;
+    fs::create_dir_all(&profile.root_path).map_err(|e| {
+        AtelierError::io(format!(
+            "Cannot create directory {}: {e}",
+            profile.root_path
+        ))
+    })?;
     Ok(profile)
 }
 

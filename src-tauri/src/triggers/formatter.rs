@@ -64,7 +64,10 @@ mod tests {
     #[test]
     fn format_result_fail() {
         let result = format_result("DELETE", "FAIL", "File not found: test.txt");
-        assert_eq!(result, r#">>>[RESULT "DELETE" "FAIL" "File not found: test.txt"]<<<"#);
+        assert_eq!(
+            result,
+            r#">>>[RESULT "DELETE" "FAIL" "File not found: test.txt"]<<<"#
+        );
     }
 
     #[test]

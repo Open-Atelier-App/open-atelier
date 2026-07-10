@@ -1,5 +1,5 @@
-use std::process::Command;
 use mp3lame_encoder::{Bitrate, Builder, DualPcm, FlushNoGap, MonoPcm, Quality};
+use std::process::Command;
 
 /// Minimal RIFF/WAVE reader — just enough to read the 16-bit PCM output of
 /// the OS text-to-speech commands we shell out to below. Not a general WAV
@@ -34,9 +34,15 @@ fn parse_wav(bytes: &[u8]) -> Result<WavPcm, String> {
             if body_end < body_start + 16 {
                 return Err("Malformed WAV fmt chunk".into());
             }
-            channels = Some(u16::from_le_bytes(bytes[body_start + 2..body_start + 4].try_into().unwrap()));
-            sample_rate = Some(u32::from_le_bytes(bytes[body_start + 4..body_start + 8].try_into().unwrap()));
-            bits_per_sample = Some(u16::from_le_bytes(bytes[body_start + 14..body_start + 16].try_into().unwrap()));
+            channels = Some(u16::from_le_bytes(
+                bytes[body_start + 2..body_start + 4].try_into().unwrap(),
+            ));
+            sample_rate = Some(u32::from_le_bytes(
+                bytes[body_start + 4..body_start + 8].try_into().unwrap(),
+            ));
+            bits_per_sample = Some(u16::from_le_bytes(
+                bytes[body_start + 14..body_start + 16].try_into().unwrap(),
+            ));
         } else if chunk_id == b"data" {
             data = Some(&bytes[body_start..body_end]);
         }
@@ -46,16 +52,27 @@ fn parse_wav(bytes: &[u8]) -> Result<WavPcm, String> {
     }
 
     let sample_rate = sample_rate.ok_or("WAV file has no fmt chunk")?;
-    let channels = channels.filter(|c| *c > 0).ok_or("WAV file reports zero channels")?;
+    let channels = channels
+        .filter(|c| *c > 0)
+        .ok_or("WAV file reports zero channels")?;
     let bits_per_sample = bits_per_sample.ok_or("WAV file has no fmt chunk")?;
     let data = data.ok_or("WAV file has no data chunk")?;
 
     if bits_per_sample != 16 {
-        return Err(format!("Unsupported WAV bit depth: {bits_per_sample} (expected 16-bit PCM)"));
+        return Err(format!(
+            "Unsupported WAV bit depth: {bits_per_sample} (expected 16-bit PCM)"
+        ));
     }
 
-    let samples = data.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect();
-    Ok(WavPcm { sample_rate, channels, samples })
+    let samples = data
+        .chunks_exact(2)
+        .map(|c| i16::from_le_bytes([c[0], c[1]]))
+        .collect();
+    Ok(WavPcm {
+        sample_rate,
+        channels,
+        samples,
+    })
 }
 
 /// Encodes 16-bit PCM WAV bytes to a real MP3 via a vendored, statically
@@ -69,10 +86,18 @@ fn encode_wav_to_mp3(wav_bytes: &[u8]) -> Result<Vec<u8>, String> {
 
     let stereo = wav.channels >= 2;
     let mut builder = Builder::new().ok_or("Failed to initialize MP3 encoder")?;
-    builder.set_num_channels(if stereo { 2 } else { 1 }).map_err(|e| e.to_string())?;
-    builder.set_sample_rate(wav.sample_rate).map_err(|e| e.to_string())?;
-    builder.set_brate(Bitrate::Kbps128).map_err(|e| e.to_string())?;
-    builder.set_quality(Quality::Good).map_err(|e| e.to_string())?;
+    builder
+        .set_num_channels(if stereo { 2 } else { 1 })
+        .map_err(|e| e.to_string())?;
+    builder
+        .set_sample_rate(wav.sample_rate)
+        .map_err(|e| e.to_string())?;
+    builder
+        .set_brate(Bitrate::Kbps128)
+        .map_err(|e| e.to_string())?;
+    builder
+        .set_quality(Quality::Good)
+        .map_err(|e| e.to_string())?;
     let mut encoder = builder.build().map_err(|e| e.to_string())?;
 
     let mut out = Vec::new();
@@ -85,14 +110,26 @@ fn encode_wav_to_mp3(wav_bytes: &[u8]) -> Result<Vec<u8>, String> {
             right.push(pair[1]);
         }
         out.reserve(mp3lame_encoder::max_required_buffer_size(frames));
-        encoder.encode_to_vec(DualPcm { left: &left, right: &right }, &mut out).map_err(|e| e.to_string())?;
+        encoder
+            .encode_to_vec(
+                DualPcm {
+                    left: &left,
+                    right: &right,
+                },
+                &mut out,
+            )
+            .map_err(|e| e.to_string())?;
     } else {
         out.reserve(mp3lame_encoder::max_required_buffer_size(wav.samples.len()));
-        encoder.encode_to_vec(MonoPcm(&wav.samples), &mut out).map_err(|e| e.to_string())?;
+        encoder
+            .encode_to_vec(MonoPcm(&wav.samples), &mut out)
+            .map_err(|e| e.to_string())?;
     }
 
     out.reserve(7200);
-    encoder.flush_to_vec::<FlushNoGap>(&mut out).map_err(|e| e.to_string())?;
+    encoder
+        .flush_to_vec::<FlushNoGap>(&mut out)
+        .map_err(|e| e.to_string())?;
 
     Ok(out)
 }
@@ -133,19 +170,25 @@ fn synthesize_wav(text: &str) -> Result<Vec<u8>, String> {
 
     let spawn_result = if cfg!(target_os = "macos") {
         Command::new("say")
-            .arg("-o").arg(&wav_path)
+            .arg("-o")
+            .arg(&wav_path)
             .arg("--data-format=LEI16@22050")
-            .arg("-f").arg(&text_path)
+            .arg("-f")
+            .arg(&text_path)
             .output()
     } else {
         Command::new("espeak-ng")
-            .arg("-w").arg(&wav_path)
-            .arg("-f").arg(&text_path)
+            .arg("-w")
+            .arg(&wav_path)
+            .arg("-f")
+            .arg(&text_path)
             .output()
             .or_else(|_| {
                 Command::new("espeak")
-                    .arg("-w").arg(&wav_path)
-                    .arg("-f").arg(&text_path)
+                    .arg("-w")
+                    .arg(&wav_path)
+                    .arg("-f")
+                    .arg(&text_path)
                     .output()
             })
     };

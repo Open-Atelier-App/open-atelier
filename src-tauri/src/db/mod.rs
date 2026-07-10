@@ -1,16 +1,18 @@
 pub mod schema;
 
-use rusqlite::{Connection, params};
+use crate::error::{AtelierError, Result};
+use rusqlite::{params, Connection};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use crate::error::{AtelierError, Result};
 
 pub type Db = Arc<Mutex<Connection>>;
 
 pub fn open(path: &Path) -> Result<Db> {
     let conn = Connection::open(path).map_err(|e| AtelierError::db(e.to_string()))?;
-    conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;")
-        .map_err(|e| AtelierError::db(e.to_string()))?;
+    conn.execute_batch(
+        "PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;",
+    )
+    .map_err(|e| AtelierError::db(e.to_string()))?;
     run_migrations(&conn)?;
     Ok(Arc::new(Mutex::new(conn)))
 }
@@ -34,12 +36,22 @@ fn run_migrations(conn: &Connection) -> Result<()> {
     add_column_if_missing(conn, "messages", "input_tokens", "INTEGER");
     add_column_if_missing(conn, "messages", "output_tokens", "INTEGER");
     add_column_if_missing(conn, "messages", "display_override", "TEXT");
-    add_column_if_missing(conn, "workspaces", "parent_workspace_id", "INTEGER REFERENCES workspaces(id) ON DELETE SET NULL");
+    add_column_if_missing(
+        conn,
+        "workspaces",
+        "parent_workspace_id",
+        "INTEGER REFERENCES workspaces(id) ON DELETE SET NULL",
+    );
     add_column_if_missing(conn, "conversations", "summary", "TEXT");
     add_column_if_missing(conn, "workspaces", "description", "TEXT");
     add_column_if_missing(conn, "conversations", "compressed_memory", "TEXT");
     add_column_if_missing(conn, "conversations", "compressed_at", "INTEGER");
-    add_column_if_missing(conn, "conversations", "group_id", "INTEGER REFERENCES conversation_groups(id) ON DELETE SET NULL");
+    add_column_if_missing(
+        conn,
+        "conversations",
+        "group_id",
+        "INTEGER REFERENCES conversation_groups(id) ON DELETE SET NULL",
+    );
 
     Ok(())
 }

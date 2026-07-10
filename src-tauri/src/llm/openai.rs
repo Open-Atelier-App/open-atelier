@@ -1,8 +1,8 @@
+use super::router::{emit_token, StreamResult};
+use super::sse::{friendly_stream_error, LineBuffer};
+use crate::error::{AtelierError, ErrorCode, Result};
 use futures_util::StreamExt;
 use tauri::AppHandle;
-use crate::error::{AtelierError, ErrorCode, Result};
-use super::router::{emit_token, StreamResult};
-use super::sse::{LineBuffer, friendly_stream_error};
 
 pub async fn stream(
     app: &AppHandle,
@@ -26,9 +26,17 @@ pub async fn stream(
 
     if use_responses_api {
         // Responses API for codex-mini-latest
-        let prompt = messages.iter()
-            .map(|m| format!("{}: {}", m["role"].as_str().unwrap_or(""), m["content"].as_str().unwrap_or("")))
-            .collect::<Vec<_>>().join("\n");
+        let prompt = messages
+            .iter()
+            .map(|m| {
+                format!(
+                    "{}: {}",
+                    m["role"].as_str().unwrap_or(""),
+                    m["content"].as_str().unwrap_or("")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
 
         let body = serde_json::json!({
             "model": model,
@@ -41,7 +49,8 @@ pub async fn stream(
             .header("Authorization", format!("Bearer {api_key}"))
             .header("Content-Type", "application/json")
             .json(&body)
-            .send().await
+            .send()
+            .await
             .map_err(|e| AtelierError::new(ErrorCode::ProviderUnavailable, e.to_string()))?;
 
         if !resp.status().is_success() {
@@ -58,10 +67,17 @@ pub async fn stream(
         // the same bug — the reported "stuck loading" symptom for
         // providers that don't close the connection right after "[DONE]").
         'stream: while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| AtelierError::new(ErrorCode::ProviderUnavailable, friendly_stream_error(&e.to_string())))?;
+            let chunk = chunk.map_err(|e| {
+                AtelierError::new(
+                    ErrorCode::ProviderUnavailable,
+                    friendly_stream_error(&e.to_string()),
+                )
+            })?;
             for line in line_buf.push_chunk(&chunk) {
                 if let Some(data) = line.strip_prefix("data: ") {
-                    if data == "[DONE]" { break 'stream; }
+                    if data == "[DONE]" {
+                        break 'stream;
+                    }
                     if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
                         if let Some(delta) = v["delta"]["text"].as_str() {
                             emit_token(app, message_id, delta);
@@ -93,7 +109,8 @@ pub async fn stream(
             .header("Authorization", format!("Bearer {api_key}"))
             .header("Content-Type", "application/json")
             .json(&body)
-            .send().await
+            .send()
+            .await
             .map_err(|e| AtelierError::new(ErrorCode::ProviderUnavailable, e.to_string()))?;
 
         if !resp.status().is_success() {
@@ -105,10 +122,17 @@ pub async fn stream(
         let mut stream = resp.bytes_stream();
         let mut line_buf = LineBuffer::new();
         'stream: while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| AtelierError::new(ErrorCode::ProviderUnavailable, friendly_stream_error(&e.to_string())))?;
+            let chunk = chunk.map_err(|e| {
+                AtelierError::new(
+                    ErrorCode::ProviderUnavailable,
+                    friendly_stream_error(&e.to_string()),
+                )
+            })?;
             for line in line_buf.push_chunk(&chunk) {
                 if let Some(data) = line.strip_prefix("data: ") {
-                    if data == "[DONE]" { break 'stream; }
+                    if data == "[DONE]" {
+                        break 'stream;
+                    }
                     if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
                         if let Some(delta) = v["choices"][0]["delta"]["content"].as_str() {
                             emit_token(app, message_id, delta);
@@ -131,13 +155,21 @@ pub async fn stream(
         }
     }
 
-    Ok(StreamResult { content: full_content, input_tokens, output_tokens, finish_reason })
+    Ok(StreamResult {
+        content: full_content,
+        input_tokens,
+        output_tokens,
+        finish_reason,
+    })
 }
 
 fn map_openai_error(status: u16, body: &str) -> AtelierError {
     match status {
         401 => AtelierError::new(ErrorCode::ProviderUnauthorized, "Invalid OpenAI API key"),
         429 => AtelierError::new(ErrorCode::ProviderRateLimited, "OpenAI rate limit exceeded"),
-        _ => AtelierError::new(ErrorCode::ProviderError, format!("OpenAI error {status}: {body}")),
+        _ => AtelierError::new(
+            ErrorCode::ProviderError,
+            format!("OpenAI error {status}: {body}"),
+        ),
     }
 }

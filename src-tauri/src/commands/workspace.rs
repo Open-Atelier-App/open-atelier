@@ -1,9 +1,9 @@
+use crate::db::{now_ms, Db};
+use crate::error::{AtelierError, Result};
+use crate::llm;
+use crate::models::Workspace;
 use std::path::Path;
 use tauri::{AppHandle, State};
-use crate::db::{Db, now_ms};
-use crate::error::{AtelierError, Result};
-use crate::models::Workspace;
-use crate::llm;
 
 const WORKSPACE_COLUMNS: &str = "id, profile_id, path, name, created_at, last_opened_at, index_status, settings_json, parent_workspace_id, description";
 
@@ -31,9 +31,15 @@ fn path_to_name(path: &str) -> String {
 }
 
 #[tauri::command]
-pub fn workspace_open(path: String, parent_workspace_id: Option<i64>, db: State<Db>) -> Result<Workspace> {
+pub fn workspace_open(
+    path: String,
+    parent_workspace_id: Option<i64>,
+    db: State<Db>,
+) -> Result<Workspace> {
     if !Path::new(&path).exists() {
-        return Err(AtelierError::not_found(format!("Path does not exist: {path}")));
+        return Err(AtelierError::not_found(format!(
+            "Path does not exist: {path}"
+        )));
     }
     let name = path_to_name(&path);
     let now = now_ms();
@@ -41,19 +47,25 @@ pub fn workspace_open(path: String, parent_workspace_id: Option<i64>, db: State<
     let db = db.lock().map_err(|_| AtelierError::internal("lock"))?;
 
     // Get active profile
-    let (profile_id, profile_root): (i64, String) = db.query_row(
-        "SELECT id, root_path FROM profiles WHERE is_active = 1 LIMIT 1",
-        [],
-        |r| Ok((r.get(0)?, r.get(1)?)),
-    ).map_err(|_| AtelierError::internal("No active profile"))?;
+    let (profile_id, profile_root): (i64, String) = db
+        .query_row(
+            "SELECT id, root_path FROM profiles WHERE is_active = 1 LIMIT 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(|_| AtelierError::internal("No active profile"))?;
 
     // Projects must live inside the active profile's folder, so the
     // workspace list always reflects "what belongs to this profile"
     // instead of mixing in unrelated locations on disk.
-    let canonical_path = Path::new(&path).canonicalize()
+    let canonical_path = Path::new(&path)
+        .canonicalize()
         .map_err(|e| AtelierError::io(format!("Cannot resolve path {path}: {e}")))?;
-    let canonical_root = Path::new(&profile_root).canonicalize()
-        .map_err(|e| AtelierError::io(format!("Cannot resolve profile directory {profile_root}: {e}")))?;
+    let canonical_root = Path::new(&profile_root).canonicalize().map_err(|e| {
+        AtelierError::io(format!(
+            "Cannot resolve profile directory {profile_root}: {e}"
+        ))
+    })?;
     if !canonical_path.starts_with(&canonical_root) {
         return Err(AtelierError::new(
             crate::error::ErrorCode::PathNotAllowed,
@@ -62,11 +74,13 @@ pub fn workspace_open(path: String, parent_workspace_id: Option<i64>, db: State<
     }
 
     if let Some(parent_id) = parent_workspace_id {
-        let parent_profile_id: i64 = db.query_row(
-            "SELECT profile_id FROM workspaces WHERE id = ?1",
-            [parent_id],
-            |r| r.get(0),
-        ).map_err(|_| AtelierError::not_found("Parent project not found"))?;
+        let parent_profile_id: i64 = db
+            .query_row(
+                "SELECT profile_id FROM workspaces WHERE id = ?1",
+                [parent_id],
+                |r| r.get(0),
+            )
+            .map_err(|_| AtelierError::not_found("Parent project not found"))?;
         if parent_profile_id != profile_id {
             return Err(AtelierError::new(
                 crate::error::ErrorCode::PathNotAllowed,
@@ -104,7 +118,11 @@ pub fn workspace_list(profile_id: i64, db: State<Db>) -> Result<Vec<Workspace>> 
 }
 
 #[tauri::command]
-pub fn workspace_set_parent(id: i64, parent_workspace_id: Option<i64>, db: State<Db>) -> Result<Workspace> {
+pub fn workspace_set_parent(
+    id: i64,
+    parent_workspace_id: Option<i64>,
+    db: State<Db>,
+) -> Result<Workspace> {
     let db = db.lock().map_err(|_| AtelierError::internal("lock"))?;
     set_parent_impl(&db, id, parent_workspace_id)
 }
@@ -115,25 +133,54 @@ pub fn workspace_set_parent(id: i64, parent_workspace_id: Option<i64>, db: State
 pub fn workspace_set_description(id: i64, description: String, db: State<Db>) -> Result<Workspace> {
     let db = db.lock().map_err(|_| AtelierError::internal("lock"))?;
     let trimmed = description.trim();
-    let value: Option<&str> = if trimmed.is_empty() { None } else { Some(trimmed) };
-    db.execute("UPDATE workspaces SET description = ?1 WHERE id = ?2", rusqlite::params![value, id])?;
-    let ws = db.query_row(&format!("SELECT {WORKSPACE_COLUMNS} FROM workspaces WHERE id = ?1"), [id], row_to_workspace)?;
+    let value: Option<&str> = if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    };
+    db.execute(
+        "UPDATE workspaces SET description = ?1 WHERE id = ?2",
+        rusqlite::params![value, id],
+    )?;
+    let ws = db.query_row(
+        &format!("SELECT {WORKSPACE_COLUMNS} FROM workspaces WHERE id = ?1"),
+        [id],
+        row_to_workspace,
+    )?;
     Ok(ws)
 }
 
-fn set_parent_impl(conn: &rusqlite::Connection, id: i64, parent_workspace_id: Option<i64>) -> Result<Workspace> {
+fn set_parent_impl(
+    conn: &rusqlite::Connection,
+    id: i64,
+    parent_workspace_id: Option<i64>,
+) -> Result<Workspace> {
     if let Some(parent_id) = parent_workspace_id {
         if parent_id == id {
-            return Err(AtelierError::new(crate::error::ErrorCode::PathNotAllowed, "A project cannot be its own parent"));
+            return Err(AtelierError::new(
+                crate::error::ErrorCode::PathNotAllowed,
+                "A project cannot be its own parent",
+            ));
         }
         let (parent_profile_id, own_profile_id): (i64, i64) = (
-            conn.query_row("SELECT profile_id FROM workspaces WHERE id = ?1", [parent_id], |r| r.get(0))
-                .map_err(|_| AtelierError::not_found("Parent project not found"))?,
-            conn.query_row("SELECT profile_id FROM workspaces WHERE id = ?1", [id], |r| r.get(0))
-                .map_err(|_| AtelierError::not_found("Workspace not found"))?,
+            conn.query_row(
+                "SELECT profile_id FROM workspaces WHERE id = ?1",
+                [parent_id],
+                |r| r.get(0),
+            )
+            .map_err(|_| AtelierError::not_found("Parent project not found"))?,
+            conn.query_row(
+                "SELECT profile_id FROM workspaces WHERE id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .map_err(|_| AtelierError::not_found("Workspace not found"))?,
         );
         if parent_profile_id != own_profile_id {
-            return Err(AtelierError::new(crate::error::ErrorCode::PathNotAllowed, "Parent project must belong to the same profile"));
+            return Err(AtelierError::new(
+                crate::error::ErrorCode::PathNotAllowed,
+                "Parent project must belong to the same profile",
+            ));
         }
         // A sub-project one level deep is the only shape this feature
         // supports today — reject making a project a child of one of its
@@ -141,14 +188,31 @@ fn set_parent_impl(conn: &rusqlite::Connection, id: i64, parent_workspace_id: Op
         let mut ancestor = Some(parent_id);
         while let Some(a) = ancestor {
             if a == id {
-                return Err(AtelierError::new(crate::error::ErrorCode::PathNotAllowed, "That would create a parent/child cycle"));
+                return Err(AtelierError::new(
+                    crate::error::ErrorCode::PathNotAllowed,
+                    "That would create a parent/child cycle",
+                ));
             }
-            ancestor = conn.query_row("SELECT parent_workspace_id FROM workspaces WHERE id = ?1", [a], |r| r.get(0)).ok().flatten();
+            ancestor = conn
+                .query_row(
+                    "SELECT parent_workspace_id FROM workspaces WHERE id = ?1",
+                    [a],
+                    |r| r.get(0),
+                )
+                .ok()
+                .flatten();
         }
     }
 
-    conn.execute("UPDATE workspaces SET parent_workspace_id = ?1 WHERE id = ?2", rusqlite::params![parent_workspace_id, id])?;
-    let ws = conn.query_row(&format!("SELECT {WORKSPACE_COLUMNS} FROM workspaces WHERE id = ?1"), [id], row_to_workspace)?;
+    conn.execute(
+        "UPDATE workspaces SET parent_workspace_id = ?1 WHERE id = ?2",
+        rusqlite::params![parent_workspace_id, id],
+    )?;
+    let ws = conn.query_row(
+        &format!("SELECT {WORKSPACE_COLUMNS} FROM workspaces WHERE id = ?1"),
+        [id],
+        row_to_workspace,
+    )?;
     Ok(ws)
 }
 
@@ -161,7 +225,10 @@ pub fn workspace_close(_id: i64) -> Result<()> {
 #[tauri::command]
 pub fn workspace_rename(id: i64, name: String, db: State<Db>) -> Result<Workspace> {
     let db = db.lock().map_err(|_| AtelierError::internal("lock"))?;
-    db.execute("UPDATE workspaces SET name = ?1 WHERE id = ?2", rusqlite::params![name, id])?;
+    db.execute(
+        "UPDATE workspaces SET name = ?1 WHERE id = ?2",
+        rusqlite::params![name, id],
+    )?;
     let ws = db.query_row(
         &format!("SELECT {WORKSPACE_COLUMNS} FROM workspaces WHERE id = ?1"),
         [id],
@@ -174,11 +241,11 @@ pub fn workspace_rename(id: i64, name: String, db: State<Db>) -> Result<Workspac
 pub fn workspace_delete(id: i64, db: State<Db>) -> Result<()> {
     let db = db.lock().map_err(|_| AtelierError::internal("lock"))?;
 
-    let ws_path: String = db.query_row(
-        "SELECT path FROM workspaces WHERE id = ?1",
-        [id],
-        |r| r.get(0),
-    ).map_err(|_| AtelierError::not_found("Workspace not found"))?;
+    let ws_path: String = db
+        .query_row("SELECT path FROM workspaces WHERE id = ?1", [id], |r| {
+            r.get(0)
+        })
+        .map_err(|_| AtelierError::not_found("Workspace not found"))?;
 
     // Cascade-delete associated data before removing the workspace record.
     // Foreign-key ON DELETE CASCADE handles most of this, but we explicitly
@@ -219,11 +286,7 @@ pub fn workspace_delete(id: i64, db: State<Db>) -> Result<()> {
 }
 
 #[tauri::command]
-pub async fn workspace_suggest_name(
-    app: AppHandle,
-    id: i64,
-    db: State<'_, Db>,
-) -> Result<String> {
+pub async fn workspace_suggest_name(app: AppHandle, id: i64, db: State<'_, Db>) -> Result<String> {
     // "Magic rename" is invoked from the project overview, before any
     // conversation is necessarily active — there's no reliable "currently
     // selected" model at that point (the new-chat picker is a mutable,
@@ -234,7 +297,10 @@ pub async fn workspace_suggest_name(
     // haven't configured.
     let (ws_path, provider, model, profile_id): (String, String, String, Option<i64>) = {
         let db = db.lock().map_err(|_| AtelierError::internal("lock"))?;
-        let ws_path: String = db.query_row("SELECT path FROM workspaces WHERE id = ?1", [id], |r| r.get(0))
+        let ws_path: String = db
+            .query_row("SELECT path FROM workspaces WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
             .map_err(|_| AtelierError::not_found("Workspace not found"))?;
         let (provider, model): (String, String) = db.query_row(
             "SELECT m.provider, m.model FROM messages m
@@ -246,7 +312,13 @@ pub async fn workspace_suggest_name(
         ).map_err(|_| AtelierError::internal(
             "Chat with this project at least once before using magic rename, so Atelier knows which model to use."
         ))?;
-        let profile_id: Option<i64> = db.query_row("SELECT profile_id FROM workspaces WHERE id = ?1", [id], |r| r.get(0)).ok();
+        let profile_id: Option<i64> = db
+            .query_row(
+                "SELECT profile_id FROM workspaces WHERE id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .ok();
         (ws_path, provider, model, profile_id)
     };
 
@@ -254,7 +326,9 @@ pub async fn workspace_suggest_name(
     let mut listing = String::new();
     if let Ok(entries) = std::fs::read_dir(dir) {
         for (i, entry) in entries.flatten().enumerate() {
-            if i >= 40 { break; }
+            if i >= 40 {
+                break;
+            }
             let name = entry.file_name().to_string_lossy().to_string();
             let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
             listing.push_str(&format!("{}{}\n", if is_dir { "[dir] " } else { "" }, name));
@@ -262,7 +336,9 @@ pub async fn workspace_suggest_name(
     }
 
     if listing.is_empty() {
-        return Err(AtelierError::internal("Empty directory — no files to analyze"));
+        return Err(AtelierError::internal(
+            "Empty directory — no files to analyze",
+        ));
     }
 
     let prompt = format!(
@@ -277,8 +353,20 @@ pub async fn workspace_suggest_name(
     let mut last_err = None;
     let mut result = None;
     for (attempt, delay_ms) in RETRY_DELAYS_MS.iter().enumerate() {
-        match llm::stream_chat(&app, -1, &provider, &model, vec![("user".to_string(), prompt.clone())], profile_id).await {
-            Ok(r) => { result = Some(r); break; }
+        match llm::stream_chat(
+            &app,
+            -1,
+            &provider,
+            &model,
+            vec![("user".to_string(), prompt.clone())],
+            profile_id,
+        )
+        .await
+        {
+            Ok(r) => {
+                result = Some(r);
+                break;
+            }
             Err(e) => {
                 log::warn!(
                     "workspace_suggest_name attempt {} failed for {provider}/{model} (workspace {id}): {} (code: {:?})",
@@ -291,7 +379,9 @@ pub async fn workspace_suggest_name(
     }
     let result = match result {
         Some(r) => r,
-        None => return Err(last_err.unwrap_or_else(|| AtelierError::internal("Name suggestion failed"))),
+        None => {
+            return Err(last_err.unwrap_or_else(|| AtelierError::internal("Name suggestion failed")))
+        }
     };
 
     let name = result.content.trim().to_string();
@@ -304,7 +394,9 @@ pub async fn workspace_suggest_name(
 #[tauri::command]
 pub fn workspace_relocate(id: i64, new_path: String, db: State<Db>) -> Result<Workspace> {
     if !Path::new(&new_path).exists() {
-        return Err(AtelierError::not_found(format!("Path does not exist: {new_path}")));
+        return Err(AtelierError::not_found(format!(
+            "Path does not exist: {new_path}"
+        )));
     }
     let name = path_to_name(&new_path);
     let db = db.lock().map_err(|_| AtelierError::internal("lock"))?;
@@ -386,7 +478,7 @@ mod tests {
         let a = insert_workspace(&conn, 1, "a");
         let b = insert_workspace(&conn, 1, "b");
         set_parent_impl(&conn, b, Some(a)).unwrap(); // b's parent is a
-        // Making a's parent b would create a cycle (a -> b -> a).
+                                                     // Making a's parent b would create a cycle (a -> b -> a).
         assert!(set_parent_impl(&conn, a, Some(b)).is_err());
     }
 }

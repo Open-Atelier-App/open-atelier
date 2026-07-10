@@ -1,10 +1,10 @@
-pub mod profile;
-pub mod workspace;
-pub mod files;
 pub mod chat;
-pub mod settings;
-pub mod window;
-pub mod cred_store;
-pub mod plan;
 pub mod connectors;
 pub mod conversation_groups;
+pub mod cred_store;
+pub mod files;
+pub mod plan;
+pub mod profile;
+pub mod settings;
+pub mod window;
+pub mod workspace;

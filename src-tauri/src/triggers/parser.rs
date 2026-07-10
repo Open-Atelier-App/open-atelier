@@ -1,10 +1,26 @@
 use serde::Serialize;
 
 const KNOWN_ACTIONS: &[&str] = &[
-    "MESSAGE", "CREATE", "DELETE", "WRITE", "INSERT",
-    "APPEND", "PREVIEW", "READ", "RENAME", "LIST",
-    "CREATE_DOCX", "CREATE_XLSX", "CREATE_PPTX", "CREATE_MP3", "EXPORT_PDF", "PLAN",
-    "GITHUB_READ", "NOTION_READ", "SLACK_READ", "GDRIVE_READ",
+    "MESSAGE",
+    "CREATE",
+    "DELETE",
+    "WRITE",
+    "INSERT",
+    "APPEND",
+    "PREVIEW",
+    "READ",
+    "RENAME",
+    "LIST",
+    "CREATE_DOCX",
+    "CREATE_XLSX",
+    "CREATE_PPTX",
+    "CREATE_MP3",
+    "EXPORT_PDF",
+    "PLAN",
+    "GITHUB_READ",
+    "NOTION_READ",
+    "SLACK_READ",
+    "GDRIVE_READ",
 ];
 
 #[derive(Debug, Clone, Serialize)]
@@ -106,7 +122,11 @@ pub fn parse(response: &str) -> ParseResult {
 
     let clean_text = clean_parts.concat().trim().to_string();
 
-    ParseResult { triggers, clean_text, errors }
+    ParseResult {
+        triggers,
+        clean_text,
+        errors,
+    }
 }
 
 /// Returns the length of the trigger opener at position `i`, if any: 4 for
@@ -198,7 +218,7 @@ fn parse_inner(inner: &str) -> std::result::Result<(String, Vec<String>), String
     }
 
     // Extract action (first word before space or quote)
-    let action_end = trimmed.find(|c: char| c == ' ' || c == '"').unwrap_or(trimmed.len());
+    let action_end = trimmed.find([' ', '"']).unwrap_or(trimmed.len());
     let action = trimmed[..action_end].trim().to_string();
 
     if action.is_empty() {
@@ -230,7 +250,10 @@ fn parse_quoted_params(s: &str) -> std::result::Result<Vec<String>, String> {
         }
 
         if bytes[i] != b'"' {
-            return Err(format!("Expected '\"' at position {i}, found '{}'", bytes[i] as char));
+            return Err(format!(
+                "Expected '\"' at position {i}, found '{}'",
+                bytes[i] as char
+            ));
         }
         i += 1; // skip opening quote
 
@@ -361,7 +384,10 @@ mod tests {
         assert_eq!(r.triggers.len(), 1);
         assert_eq!(r.triggers[0].action, "PLAN");
         assert_eq!(r.triggers[0].params[0], "Launch prep");
-        assert_eq!(r.triggers[0].params[1], "Research market\nDraft copy\nExport PDF");
+        assert_eq!(
+            r.triggers[0].params[1],
+            "Research market\nDraft copy\nExport PDF"
+        );
     }
 
     #[test]
@@ -444,7 +470,7 @@ mod tests {
     fn trigger_delimiters_in_code_block_not_parsed() {
         // If the LLM explains syntax with >>> outside of an actual trigger pattern,
         // the parser only activates on >>>[ specifically
-        let r = parse("Use >>> and <<< like this: >>>[ACTION]<<<");
+        let _r = parse("Use >>> and <<< like this: >>>[ACTION]<<<");
         // >>>[ triggers parsing, but the inner is just "ACTION" with no valid ]<<<
         // Actually "ACTION]<<<" would be found. Let's test properly:
         let r2 = parse("The syntax is >>> followed by [ and then ]<<<. Don't use it.");
@@ -515,11 +541,16 @@ mod tests {
 
     #[test]
     fn bare_bracket_with_multiline_content_and_no_suffix() {
-        let r = parse(r##"[CREATE_DOCX "plan.docx" "# Title\n\n## Section\n- point one\n- point two"]"##);
+        let r = parse(
+            r##"[CREATE_DOCX "plan.docx" "# Title\n\n## Section\n- point one\n- point two"]"##,
+        );
         assert_eq!(r.triggers.len(), 1);
         assert_eq!(r.triggers[0].action, "CREATE_DOCX");
         assert_eq!(r.triggers[0].params[0], "plan.docx");
-        assert_eq!(r.triggers[0].params[1], "# Title\n\n## Section\n- point one\n- point two");
+        assert_eq!(
+            r.triggers[0].params[1],
+            "# Title\n\n## Section\n- point one\n- point two"
+        );
         assert!(r.clean_text.is_empty());
         assert!(r.errors.is_empty());
     }

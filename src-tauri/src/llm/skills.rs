@@ -1,5 +1,5 @@
-use std::path::{Path, PathBuf};
 use serde::Serialize;
+use std::path::{Path, PathBuf};
 
 pub struct Skill {
     pub name: String,
@@ -12,7 +12,8 @@ pub struct SkillInfo {
     pub preview: String,
 }
 
-const BUNDLED_LLM_FUNCTIONS_SKILL: &str = include_str!("../../resources/skills/llm-functions-v1.md");
+const BUNDLED_LLM_FUNCTIONS_SKILL: &str =
+    include_str!("../../resources/skills/llm-functions-v1.md");
 
 struct DefaultSkill {
     name: &'static str,
@@ -25,18 +26,54 @@ struct DefaultSkill {
 /// they only take effect once copied into the profile's `skills/` folder,
 /// same as any skill the user writes by hand.
 const DEFAULT_SKILLS: &[DefaultSkill] = &[
-    DefaultSkill { name: "meeting-notes", content: include_str!("../../resources/default-skills/meeting-notes.md") },
-    DefaultSkill { name: "presentation-builder", content: include_str!("../../resources/default-skills/presentation-builder.md") },
-    DefaultSkill { name: "code-reviewer", content: include_str!("../../resources/default-skills/code-reviewer.md") },
-    DefaultSkill { name: "research-report", content: include_str!("../../resources/default-skills/research-report.md") },
-    DefaultSkill { name: "spreadsheet-analyst", content: include_str!("../../resources/default-skills/spreadsheet-analyst.md") },
-    DefaultSkill { name: "read-aloud-narrator", content: include_str!("../../resources/default-skills/read-aloud-narrator.md") },
-    DefaultSkill { name: "email-drafting", content: include_str!("../../resources/default-skills/email-drafting.md") },
-    DefaultSkill { name: "resume-cv-writer", content: include_str!("../../resources/default-skills/resume-cv-writer.md") },
-    DefaultSkill { name: "data-analyst", content: include_str!("../../resources/default-skills/data-analyst.md") },
-    DefaultSkill { name: "translator", content: include_str!("../../resources/default-skills/translator.md") },
-    DefaultSkill { name: "brainstorm-facilitator", content: include_str!("../../resources/default-skills/brainstorm-facilitator.md") },
-    DefaultSkill { name: "github-code-reviewer", content: include_str!("../../resources/default-skills/github-code-reviewer.md") },
+    DefaultSkill {
+        name: "meeting-notes",
+        content: include_str!("../../resources/default-skills/meeting-notes.md"),
+    },
+    DefaultSkill {
+        name: "presentation-builder",
+        content: include_str!("../../resources/default-skills/presentation-builder.md"),
+    },
+    DefaultSkill {
+        name: "code-reviewer",
+        content: include_str!("../../resources/default-skills/code-reviewer.md"),
+    },
+    DefaultSkill {
+        name: "research-report",
+        content: include_str!("../../resources/default-skills/research-report.md"),
+    },
+    DefaultSkill {
+        name: "spreadsheet-analyst",
+        content: include_str!("../../resources/default-skills/spreadsheet-analyst.md"),
+    },
+    DefaultSkill {
+        name: "read-aloud-narrator",
+        content: include_str!("../../resources/default-skills/read-aloud-narrator.md"),
+    },
+    DefaultSkill {
+        name: "email-drafting",
+        content: include_str!("../../resources/default-skills/email-drafting.md"),
+    },
+    DefaultSkill {
+        name: "resume-cv-writer",
+        content: include_str!("../../resources/default-skills/resume-cv-writer.md"),
+    },
+    DefaultSkill {
+        name: "data-analyst",
+        content: include_str!("../../resources/default-skills/data-analyst.md"),
+    },
+    DefaultSkill {
+        name: "translator",
+        content: include_str!("../../resources/default-skills/translator.md"),
+    },
+    DefaultSkill {
+        name: "brainstorm-facilitator",
+        content: include_str!("../../resources/default-skills/brainstorm-facilitator.md"),
+    },
+    DefaultSkill {
+        name: "github-code-reviewer",
+        content: include_str!("../../resources/default-skills/github-code-reviewer.md"),
+    },
 ];
 
 fn skills_dir(profile_root: &str) -> PathBuf {
@@ -52,7 +89,11 @@ fn skills_dir(profile_root: &str) -> PathBuf {
 pub fn read_context_md(workspace_path: &str) -> Option<String> {
     let content = std::fs::read_to_string(Path::new(workspace_path).join("context.md")).ok()?;
     let trimmed = content.trim();
-    if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 pub fn load_skills(profile_root: &str) -> Vec<Skill> {
@@ -68,11 +109,16 @@ pub fn load_skills(profile_root: &str) -> Vec<Skill> {
         if path.extension().and_then(|e| e.to_str()) != Some("md") {
             continue;
         }
-        let Some(name) = path.file_stem().and_then(|s| s.to_str()) else { continue };
+        let Some(name) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
         if let Ok(instructions) = std::fs::read_to_string(&path) {
             let trimmed = instructions.trim();
             if !trimmed.is_empty() {
-                skills.push(Skill { name: name.to_string(), instructions: trimmed.to_string() });
+                skills.push(Skill {
+                    name: name.to_string(),
+                    instructions: trimmed.to_string(),
+                });
             }
         }
     }
@@ -82,10 +128,23 @@ pub fn load_skills(profile_root: &str) -> Vec<Skill> {
 
 #[tauri::command]
 pub fn skill_list(profile_root: String) -> Vec<SkillInfo> {
-    load_skills(&profile_root).into_iter().map(|s| {
-        let preview = s.instructions.lines().next().unwrap_or("").chars().take(120).collect();
-        SkillInfo { name: s.name, preview }
-    }).collect()
+    load_skills(&profile_root)
+        .into_iter()
+        .map(|s| {
+            let preview = s
+                .instructions
+                .lines()
+                .next()
+                .unwrap_or("")
+                .chars()
+                .take(120)
+                .collect();
+            SkillInfo {
+                name: s.name,
+                preview,
+            }
+        })
+        .collect()
 }
 
 /// Lists bundled default skills, regardless of whether they're already
@@ -93,10 +152,24 @@ pub fn skill_list(profile_root: String) -> Vec<SkillInfo> {
 /// `skill_list` to decide which ones to show as "Add" vs. already present.
 #[tauri::command]
 pub fn default_skill_list() -> Vec<SkillInfo> {
-    DEFAULT_SKILLS.iter().map(|s| {
-        let preview = s.content.trim().lines().next().unwrap_or("").chars().take(120).collect();
-        SkillInfo { name: s.name.to_string(), preview }
-    }).collect()
+    DEFAULT_SKILLS
+        .iter()
+        .map(|s| {
+            let preview = s
+                .content
+                .trim()
+                .lines()
+                .next()
+                .unwrap_or("")
+                .chars()
+                .take(120)
+                .collect();
+            SkillInfo {
+                name: s.name.to_string(),
+                preview,
+            }
+        })
+        .collect()
 }
 
 /// Copies a bundled default skill's content into the profile's `skills/`
@@ -104,8 +177,13 @@ pub fn default_skill_list() -> Vec<SkillInfo> {
 /// `load_skills` path as a skill the user wrote by hand. Overwrites if the
 /// user already has a file with that name.
 #[tauri::command]
-pub fn default_skill_install(profile_root: String, name: String) -> std::result::Result<(), String> {
-    let skill = DEFAULT_SKILLS.iter().find(|s| s.name == name)
+pub fn default_skill_install(
+    profile_root: String,
+    name: String,
+) -> std::result::Result<(), String> {
+    let skill = DEFAULT_SKILLS
+        .iter()
+        .find(|s| s.name == name)
         .ok_or_else(|| format!("Unknown default skill: {name}"))?;
 
     let dir = skills_dir(&profile_root);
@@ -117,7 +195,13 @@ pub fn default_skill_install(profile_root: String, name: String) -> std::result:
     Ok(())
 }
 
-pub fn build_context(profile_root: &str, workspace_name: &str, workspace_path: &str, provider: &str, is_first_message: bool) -> String {
+pub fn build_context(
+    profile_root: &str,
+    workspace_name: &str,
+    workspace_path: &str,
+    provider: &str,
+    is_first_message: bool,
+) -> String {
     let mut block = if is_first_message {
         format!(
             "You are the AI assistant inside Open Atelier, a local-first creative workspace \
@@ -191,10 +275,14 @@ pub fn build_context(profile_root: &str, workspace_name: &str, workspace_path: &
     }
 
     // Append runtime permission block
-    let perm_level = super::permissions::get_level_for_provider(provider).unwrap_or_else(|_| "chat_only".into());
-    let perm_label = super::permissions::level_label(&perm_level).unwrap_or_else(|_| "Chat Only".into());
-    let allowed = super::permissions::allowed_triggers_for_level(&perm_level).unwrap_or_else(|_| vec!["MESSAGE".into()]);
-    let perm_block = crate::triggers::formatter::format_runtime_permission_block(&perm_label, &allowed);
+    let perm_level =
+        super::permissions::get_level_for_provider(provider).unwrap_or_else(|_| "chat_only".into());
+    let perm_label =
+        super::permissions::level_label(&perm_level).unwrap_or_else(|_| "Chat Only".into());
+    let allowed = super::permissions::allowed_triggers_for_level(&perm_level)
+        .unwrap_or_else(|_| vec!["MESSAGE".into()]);
+    let perm_block =
+        crate::triggers::formatter::format_runtime_permission_block(&perm_label, &allowed);
     block.push_str("\n\n");
     block.push_str(&perm_block);
 
@@ -206,7 +294,8 @@ mod tests {
     use super::*;
 
     fn temp_profile() -> String {
-        let dir = std::env::temp_dir().join(format!("atelier_skills_test_{}", uuid::Uuid::new_v4()));
+        let dir =
+            std::env::temp_dir().join(format!("atelier_skills_test_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         dir.to_str().unwrap().to_string()
     }
@@ -218,7 +307,11 @@ mod tests {
         let mut names: Vec<&str> = list.iter().map(|s| s.name.as_str()).collect();
         names.sort();
         names.dedup();
-        assert_eq!(names.len(), list.len(), "default skill names must be unique");
+        assert_eq!(
+            names.len(),
+            list.len(),
+            "default skill names must be unique"
+        );
         for s in &list {
             assert!(!s.preview.is_empty(), "{} has an empty preview", s.name);
         }
@@ -238,7 +331,8 @@ mod tests {
     #[test]
     fn default_skill_install_rejects_unknown_name() {
         let profile_root = temp_profile();
-        let err = default_skill_install(profile_root.clone(), "not-a-real-skill".to_string()).unwrap_err();
+        let err = default_skill_install(profile_root.clone(), "not-a-real-skill".to_string())
+            .unwrap_err();
         assert!(err.contains("Unknown default skill"));
 
         std::fs::remove_dir_all(&profile_root).ok();

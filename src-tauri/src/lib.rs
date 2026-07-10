@@ -1,16 +1,15 @@
+pub mod commands;
+pub mod connectors;
 pub mod db;
 pub mod error;
-pub mod models;
-pub mod commands;
-pub mod llm;
 pub mod indexer;
+pub mod llm;
+pub mod models;
 pub mod triggers;
-pub mod connectors;
 
 use std::path::PathBuf;
 use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
 use tauri::{Emitter, Manager};
-use db::Db as _;
 use triggers::snapshot::SnapshotStore;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -44,13 +43,12 @@ pub fn run() {
                 std::fs::create_dir_all(parent).ok();
             }
 
-            let database = db::open(&db_path)
-                .expect("Failed to open database");
+            let database = db::open(&db_path).expect("Failed to open database");
             app.manage(database);
             app.manage(std::sync::Arc::new(SnapshotStore::new()));
 
             // Load permission config from bundled resources
-            if let Some(resource_dir) = app.path().resource_dir().ok() {
+            if let Ok(resource_dir) = app.path().resource_dir() {
                 if let Err(e) = llm::permissions::load_config(&resource_dir) {
                     log::warn!("Failed to load permission config: {e}");
                 }
@@ -63,10 +61,10 @@ pub fn run() {
             let preferences = MenuItemBuilder::with_id("preferences", "Preferences…")
                 .accelerator("CmdOrCtrl+,")
                 .build(app)?;
-            let check_updates = MenuItemBuilder::with_id("check_updates", "Check for Updates…")
-                .build(app)?;
-            let copy_logs = MenuItemBuilder::with_id("copy_logs", "Copy Diagnostic Report")
-                .build(app)?;
+            let check_updates =
+                MenuItemBuilder::with_id("check_updates", "Check for Updates…").build(app)?;
+            let copy_logs =
+                MenuItemBuilder::with_id("copy_logs", "Copy Diagnostic Report").build(app)?;
             let app_submenu = SubmenuBuilder::new(app, "Open Atelier")
                 .item(&PredefinedMenuItem::about(app, None, None)?)
                 .item(&check_updates)

@@ -12,10 +12,10 @@
 //! for reading, cross-checked against files produced by real python-pptx
 //! (not just our own writer) but not verified against actual PowerPoint.
 
-use std::io::{Cursor, Read, Write};
-use docx_rs::{Docx, DocumentChild, Paragraph, ParagraphChild, Run, RunChild};
+use docx_rs::{DocumentChild, Docx, Paragraph, ParagraphChild, Run, RunChild};
 use rust_xlsxwriter::{Format, Workbook};
 use serde::Serialize;
+use std::io::{Cursor, Read, Write};
 use zip::write::SimpleFileOptions;
 
 #[derive(Debug, Serialize)]
@@ -37,7 +37,9 @@ pub fn read_office_preview(rel_path: &str, bytes: &[u8]) -> Result<OfficePreview
     } else if lower.ends_with(".pptx") {
         read_pptx(bytes).map(OfficePreview::Pptx)
     } else {
-        Err(format!("Unsupported file type for office preview: {rel_path}"))
+        Err(format!(
+            "Unsupported file type for office preview: {rel_path}"
+        ))
     }
 }
 
@@ -76,7 +78,9 @@ pub fn build_docx(content: &str) -> Result<Vec<u8>, String> {
     }
 
     let mut buf = Cursor::new(Vec::new());
-    docx.build().pack(&mut buf).map_err(|e| format!("Failed to build docx: {e}"))?;
+    docx.build()
+        .pack(&mut buf)
+        .map_err(|e| format!("Failed to build docx: {e}"))?;
     Ok(buf.into_inner())
 }
 
@@ -89,7 +93,11 @@ fn heading_text(line: &str, level: usize) -> Option<&str> {
     if hashes == 0 || !line[hashes..].starts_with(' ') {
         return None;
     }
-    let matches_level = if level == 3 { hashes >= 3 } else { hashes == level };
+    let matches_level = if level == 3 {
+        hashes >= 3
+    } else {
+        hashes == level
+    };
     matches_level.then(|| line[hashes + 1..].trim_start())
 }
 
@@ -120,7 +128,9 @@ pub fn read_docx(bytes: &[u8]) -> Result<DocxPreview, String> {
 
     let mut blocks = Vec::new();
     for child in &docx.document.children {
-        let DocumentChild::Paragraph(p) = child else { continue };
+        let DocumentChild::Paragraph(p) = child else {
+            continue;
+        };
 
         let mut text = String::new();
         for pc in &p.children {
@@ -136,11 +146,20 @@ pub fn read_docx(bytes: &[u8]) -> Result<DocxPreview, String> {
             continue;
         }
 
-        let style_id = p.property.style.as_ref().map(|s| s.val.as_str()).unwrap_or("");
+        let style_id = p
+            .property
+            .style
+            .as_ref()
+            .map(|s| s.val.as_str())
+            .unwrap_or("");
         let style_lower = style_id.to_lowercase();
 
         let first_run_props = p.children.iter().find_map(|pc| {
-            if let ParagraphChild::Run(r) = pc { Some(&r.run_property) } else { None }
+            if let ParagraphChild::Run(r) = pc {
+                Some(&r.run_property)
+            } else {
+                None
+            }
         });
         let bold = first_run_props
             .and_then(|rp| serde_json::to_value(&rp.bold).ok())
@@ -162,10 +181,13 @@ pub fn read_docx(bytes: &[u8]) -> Result<DocxPreview, String> {
             DocxBlock::Heading2 { text }
         } else if bold && size.is_some_and(|s| s >= 24) {
             DocxBlock::Heading3 { text }
-        } else if style_lower.contains("bullet") || style_lower.contains("list") || p.has_numbering {
+        } else if style_lower.contains("bullet") || style_lower.contains("list") || p.has_numbering
+        {
             DocxBlock::Bullet { text }
         } else if let Some(rest) = text.strip_prefix('\u{2022}') {
-            DocxBlock::Bullet { text: rest.trim().to_string() }
+            DocxBlock::Bullet {
+                text: rest.trim().to_string(),
+            }
         } else {
             DocxBlock::Paragraph { text }
         };
@@ -193,20 +215,25 @@ pub fn build_xlsx(content: &str) -> Result<Vec<u8>, String> {
         for (col_idx, cell) in cells.iter().enumerate() {
             let col_idx = col_idx as u16;
             if row_idx == 0 {
-                worksheet.write_with_format(row_idx, col_idx, cell.as_str(), &header_format)
+                worksheet
+                    .write_with_format(row_idx, col_idx, cell.as_str(), &header_format)
                     .map_err(|e| format!("Failed to write header cell: {e}"))?;
             } else if let Ok(n) = cell.parse::<f64>() {
-                worksheet.write_number(row_idx, col_idx, n)
+                worksheet
+                    .write_number(row_idx, col_idx, n)
                     .map_err(|e| format!("Failed to write number cell: {e}"))?;
             } else {
-                worksheet.write_string(row_idx, col_idx, cell.as_str())
+                worksheet
+                    .write_string(row_idx, col_idx, cell.as_str())
                     .map_err(|e| format!("Failed to write string cell: {e}"))?;
             }
         }
         row_idx += 1;
     }
 
-    workbook.save_to_buffer().map_err(|e| format!("Failed to build xlsx: {e}"))
+    workbook
+        .save_to_buffer()
+        .map_err(|e| format!("Failed to build xlsx: {e}"))
 }
 
 #[derive(Debug, Serialize)]
@@ -296,27 +323,79 @@ pub fn build_pptx(content: &str) -> Result<Vec<u8>, String> {
     let mut buf = Cursor::new(Vec::new());
     {
         let mut zip = zip::ZipWriter::new(&mut buf);
-        let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
-        write_entry(&mut zip, options, "[Content_Types].xml", &content_types_xml(slides.len()))?;
+        write_entry(
+            &mut zip,
+            options,
+            "[Content_Types].xml",
+            &content_types_xml(slides.len()),
+        )?;
         write_entry(&mut zip, options, "_rels/.rels", ROOT_RELS)?;
-        write_entry(&mut zip, options, "docProps/app.xml", &app_xml(slides.len()))?;
+        write_entry(
+            &mut zip,
+            options,
+            "docProps/app.xml",
+            &app_xml(slides.len()),
+        )?;
         write_entry(&mut zip, options, "docProps/core.xml", CORE_XML)?;
-        write_entry(&mut zip, options, "ppt/presentation.xml", &presentation_xml(slides.len()))?;
-        write_entry(&mut zip, options, "ppt/_rels/presentation.xml.rels", &presentation_rels_xml(slides.len()))?;
+        write_entry(
+            &mut zip,
+            options,
+            "ppt/presentation.xml",
+            &presentation_xml(slides.len()),
+        )?;
+        write_entry(
+            &mut zip,
+            options,
+            "ppt/_rels/presentation.xml.rels",
+            &presentation_rels_xml(slides.len()),
+        )?;
         write_entry(&mut zip, options, "ppt/theme/theme1.xml", THEME_XML)?;
-        write_entry(&mut zip, options, "ppt/slideMasters/slideMaster1.xml", SLIDE_MASTER_XML)?;
-        write_entry(&mut zip, options, "ppt/slideMasters/_rels/slideMaster1.xml.rels", SLIDE_MASTER_RELS)?;
-        write_entry(&mut zip, options, "ppt/slideLayouts/slideLayout1.xml", SLIDE_LAYOUT_XML)?;
-        write_entry(&mut zip, options, "ppt/slideLayouts/_rels/slideLayout1.xml.rels", SLIDE_LAYOUT_RELS)?;
+        write_entry(
+            &mut zip,
+            options,
+            "ppt/slideMasters/slideMaster1.xml",
+            SLIDE_MASTER_XML,
+        )?;
+        write_entry(
+            &mut zip,
+            options,
+            "ppt/slideMasters/_rels/slideMaster1.xml.rels",
+            SLIDE_MASTER_RELS,
+        )?;
+        write_entry(
+            &mut zip,
+            options,
+            "ppt/slideLayouts/slideLayout1.xml",
+            SLIDE_LAYOUT_XML,
+        )?;
+        write_entry(
+            &mut zip,
+            options,
+            "ppt/slideLayouts/_rels/slideLayout1.xml.rels",
+            SLIDE_LAYOUT_RELS,
+        )?;
 
         for (i, slide) in slides.iter().enumerate() {
             let n = i + 1;
-            write_entry(&mut zip, options, &format!("ppt/slides/slide{n}.xml"), &slide_xml(slide))?;
-            write_entry(&mut zip, options, &format!("ppt/slides/_rels/slide{n}.xml.rels"), SLIDE_RELS)?;
+            write_entry(
+                &mut zip,
+                options,
+                &format!("ppt/slides/slide{n}.xml"),
+                &slide_xml(slide),
+            )?;
+            write_entry(
+                &mut zip,
+                options,
+                &format!("ppt/slides/_rels/slide{n}.xml.rels"),
+                SLIDE_RELS,
+            )?;
         }
 
-        zip.finish().map_err(|e| format!("Failed to finalize pptx zip: {e}"))?;
+        zip.finish()
+            .map_err(|e| format!("Failed to finalize pptx zip: {e}"))?;
     }
     Ok(buf.into_inner())
 }
@@ -329,7 +408,10 @@ fn parse_slides(content: &str) -> Vec<Slide> {
 
     let flush = |title: &mut String, bullets: &mut Vec<Bullet>, slides: &mut Vec<Slide>| {
         if !title.is_empty() || !bullets.is_empty() {
-            slides.push(Slide { title: std::mem::take(title), bullets: std::mem::take(bullets) });
+            slides.push(Slide {
+                title: std::mem::take(title),
+                bullets: std::mem::take(bullets),
+            });
         }
     };
 
@@ -354,14 +436,23 @@ fn parse_slides(content: &str) -> Vec<Slide> {
             if hashes == 1 && title.is_empty() {
                 title = text;
             } else {
-                bullets.push(Bullet { text, heading: true });
+                bullets.push(Bullet {
+                    text,
+                    heading: true,
+                });
             }
         } else if let Some(text) = trimmed.strip_prefix("- ") {
-            bullets.push(Bullet { text: text.to_string(), heading: false });
+            bullets.push(Bullet {
+                text: text.to_string(),
+                heading: false,
+            });
         } else if title.is_empty() {
             title = trimmed.to_string();
         } else {
-            bullets.push(Bullet { text: trimmed.to_string(), heading: false });
+            bullets.push(Bullet {
+                text: trimmed.to_string(),
+                heading: false,
+            });
         }
     }
     if started {
@@ -395,7 +486,8 @@ pub struct PptxBullet {
 /// content, not layout/images/formatting — good enough for a quick preview.
 pub fn read_pptx(bytes: &[u8]) -> Result<PptxPreview, String> {
     let cursor = Cursor::new(bytes);
-    let mut archive = zip::ZipArchive::new(cursor).map_err(|e| format!("Could not open .pptx: {e}"))?;
+    let mut archive =
+        zip::ZipArchive::new(cursor).map_err(|e| format!("Could not open .pptx: {e}"))?;
 
     let mut slide_paths: Vec<(u32, String)> = (0..archive.len())
         .filter_map(|i| archive.by_index(i).ok().map(|f| f.name().to_string()))
@@ -409,9 +501,12 @@ pub fn read_pptx(bytes: &[u8]) -> Result<PptxPreview, String> {
 
     let mut slides = Vec::new();
     for (_, path) in slide_paths {
-        let mut file = archive.by_name(&path).map_err(|e| format!("Could not read {path}: {e}"))?;
+        let mut file = archive
+            .by_name(&path)
+            .map_err(|e| format!("Could not read {path}: {e}"))?;
         let mut xml = String::new();
-        file.read_to_string(&mut xml).map_err(|e| format!("Could not read {path}: {e}"))?;
+        file.read_to_string(&mut xml)
+            .map_err(|e| format!("Could not read {path}: {e}"))?;
         slides.push(parse_slide_text(&xml));
     }
 
@@ -476,10 +571,8 @@ fn parse_slide_text(xml: &str) -> PptxSlide {
                         sp_is_title = true;
                     }
                 }
-                b"a:rPr" => {
-                    if is_bold_rpr(&e) {
-                        cur_paragraph_bold = true;
-                    }
+                b"a:rPr" if is_bold_rpr(&e) => {
+                    cur_paragraph_bold = true;
                 }
                 _ => {}
             },
@@ -501,9 +594,17 @@ fn parse_slide_text(xml: &str) -> PptxSlide {
                 }
                 b"p:sp" => {
                     if sp_is_title {
-                        title = sp_paragraphs.drain(..).map(|(t, _)| t).collect::<Vec<_>>().join(" ");
+                        title = sp_paragraphs
+                            .drain(..)
+                            .map(|(t, _)| t)
+                            .collect::<Vec<_>>()
+                            .join(" ");
                     } else {
-                        bullets.extend(sp_paragraphs.drain(..).map(|(text, heading)| PptxBullet { text, heading }));
+                        bullets.extend(
+                            sp_paragraphs
+                                .drain(..)
+                                .map(|(text, heading)| PptxBullet { text, heading }),
+                        );
                     }
                     in_sp = false;
                 }
@@ -521,7 +622,8 @@ fn is_title_ph(e: &quick_xml::events::BytesStart) -> bool {
     e.attributes().flatten().any(|a| {
         a.key.as_ref() == b"type"
             && matches!(
-                a.normalized_value(quick_xml::XmlVersion::Implicit1_0).as_deref(),
+                a.normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                    .as_deref(),
                 Ok("title") | Ok("ctrTitle")
             )
     })
@@ -531,7 +633,8 @@ fn is_bold_rpr(e: &quick_xml::events::BytesStart) -> bool {
     e.attributes().flatten().any(|a| {
         a.key.as_ref() == b"b"
             && matches!(
-                a.normalized_value(quick_xml::XmlVersion::Implicit1_0).as_deref(),
+                a.normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                    .as_deref(),
                 Ok("1") | Ok("true")
             )
     })
@@ -543,13 +646,18 @@ fn write_entry<W: Write + std::io::Seek>(
     name: &str,
     content: &str,
 ) -> Result<(), String> {
-    zip.start_file(name, options).map_err(|e| format!("Failed to start {name}: {e}"))?;
-    zip.write_all(content.as_bytes()).map_err(|e| format!("Failed to write {name}: {e}"))?;
+    zip.start_file(name, options)
+        .map_err(|e| format!("Failed to start {name}: {e}"))?;
+    zip.write_all(content.as_bytes())
+        .map_err(|e| format!("Failed to write {name}: {e}"))?;
     Ok(())
 }
 
 fn xml_escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 const ROOT_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -814,7 +922,8 @@ mod tests {
 
     #[test]
     fn pptx_builds_valid_zip_with_all_parts() {
-        let bytes = build_pptx("# Slide One\n- point a\n- point b\n---\n# Slide Two\n- point c").unwrap();
+        let bytes =
+            build_pptx("# Slide One\n- point a\n- point b\n---\n# Slide Two\n- point c").unwrap();
         assert_eq!(&bytes[0..4], b"PK\x03\x04");
 
         let reader = std::io::Cursor::new(bytes);
@@ -834,7 +943,10 @@ mod tests {
             "ppt/slides/slide1.xml",
             "ppt/slides/slide2.xml",
         ] {
-            assert!(names.contains(&required.to_string()), "missing part: {required}");
+            assert!(
+                names.contains(&required.to_string()),
+                "missing part: {required}"
+            );
         }
     }
 
@@ -847,7 +959,10 @@ mod tests {
     fn pptx_slide_xml_contains_title_and_bullets() {
         let slide = Slide {
             title: "Hello & Welcome".into(),
-            bullets: vec![Bullet { text: "<point>".into(), heading: false }],
+            bullets: vec![Bullet {
+                text: "<point>".into(),
+                heading: false,
+            }],
         };
         let xml = slide_xml(&slide);
         assert!(xml.contains("Hello &amp; Welcome"));
@@ -858,7 +973,10 @@ mod tests {
     fn pptx_slide_xml_renders_sub_heading_bold_without_bullet_glyph() {
         let slide = Slide {
             title: "Risques".into(),
-            bullets: vec![Bullet { text: "Risques Techniques".into(), heading: true }],
+            bullets: vec![Bullet {
+                text: "Risques Techniques".into(),
+                heading: true,
+            }],
         };
         let xml = slide_xml(&slide);
         assert!(xml.contains(r#"<a:rPr b="1"/>"#));
@@ -868,14 +986,21 @@ mod tests {
 
     #[test]
     fn read_docx_round_trips_headings_bullets_and_paragraphs() {
-        let bytes = build_docx("# Title\n\nA plain paragraph.\n\n## Subheading\n\n- one\n- two").unwrap();
+        let bytes =
+            build_docx("# Title\n\nA plain paragraph.\n\n## Subheading\n\n- one\n- two").unwrap();
         let preview = read_docx(&bytes).unwrap();
         assert_eq!(
             preview.blocks,
             vec![
-                DocxBlock::Heading1 { text: "Title".into() },
-                DocxBlock::Paragraph { text: "A plain paragraph.".into() },
-                DocxBlock::Heading2 { text: "Subheading".into() },
+                DocxBlock::Heading1 {
+                    text: "Title".into()
+                },
+                DocxBlock::Paragraph {
+                    text: "A plain paragraph.".into()
+                },
+                DocxBlock::Heading2 {
+                    text: "Subheading".into()
+                },
                 DocxBlock::Bullet { text: "one".into() },
                 DocxBlock::Bullet { text: "two".into() },
             ]
@@ -889,8 +1014,12 @@ mod tests {
         assert_eq!(
             preview.blocks,
             vec![
-                DocxBlock::Heading3 { text: "Level three".into() },
-                DocxBlock::Heading3 { text: "Level four collapses to three".into() },
+                DocxBlock::Heading3 {
+                    text: "Level three".into()
+                },
+                DocxBlock::Heading3 {
+                    text: "Level four collapses to three".into()
+                },
             ]
         );
     }
@@ -912,16 +1041,32 @@ mod tests {
 
     #[test]
     fn read_pptx_round_trips_titles_and_bullets() {
-        let bytes = build_pptx("# Slide One\n- point a\n- point b\n---\n# Slide Two\n- point c").unwrap();
+        let bytes =
+            build_pptx("# Slide One\n- point a\n- point b\n---\n# Slide Two\n- point c").unwrap();
         let preview = read_pptx(&bytes).unwrap();
         assert_eq!(preview.slides.len(), 2);
         assert_eq!(preview.slides[0].title, "Slide One");
-        assert_eq!(preview.slides[0].bullets, vec![
-            PptxBullet { text: "point a".into(), heading: false },
-            PptxBullet { text: "point b".into(), heading: false },
-        ]);
+        assert_eq!(
+            preview.slides[0].bullets,
+            vec![
+                PptxBullet {
+                    text: "point a".into(),
+                    heading: false
+                },
+                PptxBullet {
+                    text: "point b".into(),
+                    heading: false
+                },
+            ]
+        );
         assert_eq!(preview.slides[1].title, "Slide Two");
-        assert_eq!(preview.slides[1].bullets, vec![PptxBullet { text: "point c".into(), heading: false }]);
+        assert_eq!(
+            preview.slides[1].bullets,
+            vec![PptxBullet {
+                text: "point c".into(),
+                heading: false
+            }]
+        );
     }
 
     #[test]
@@ -930,14 +1075,32 @@ mod tests {
         let preview = read_pptx(&bytes).unwrap();
         assert_eq!(preview.slides.len(), 1);
         assert_eq!(preview.slides[0].title, "Risques et Mitigation");
-        assert_eq!(preview.slides[0].bullets, vec![
-            PptxBullet { text: "Risques Techniques".into(), heading: true },
-            PptxBullet { text: "Retards".into(), heading: false },
-            PptxBullet { text: "Risques Commerciaux".into(), heading: true },
-            PptxBullet { text: "Concurrence".into(), heading: false },
-        ]);
+        assert_eq!(
+            preview.slides[0].bullets,
+            vec![
+                PptxBullet {
+                    text: "Risques Techniques".into(),
+                    heading: true
+                },
+                PptxBullet {
+                    text: "Retards".into(),
+                    heading: false
+                },
+                PptxBullet {
+                    text: "Risques Commerciaux".into(),
+                    heading: true
+                },
+                PptxBullet {
+                    text: "Concurrence".into(),
+                    heading: false
+                },
+            ]
+        );
         // The literal "##" markdown marker must never leak into bullet text.
-        assert!(preview.slides[0].bullets.iter().all(|b| !b.text.starts_with('#')));
+        assert!(preview.slides[0]
+            .bullets
+            .iter()
+            .all(|b| !b.text.starts_with('#')));
     }
 
     #[test]

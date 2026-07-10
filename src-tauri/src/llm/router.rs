@@ -1,9 +1,9 @@
-use tauri::{AppHandle, Emitter};
-use crate::commands::cred_store::{store_get, profile_store_get};
+use super::{anthropic, google, ollama, openai, openai_compatible};
+use crate::commands::cred_store::{profile_store_get, store_get};
 use crate::commands::settings::cred_keyring_name;
 use crate::error::{AtelierError, ErrorCode, Result};
 use crate::models::ChatToken;
-use super::{openai, anthropic, google, ollama, openai_compatible};
+use tauri::{AppHandle, Emitter};
 
 const SERVICE_NAME: &str = "com.openatelier.app";
 
@@ -31,7 +31,8 @@ pub struct StreamResult {
 /// fact — it tells you the model didn't make a syntax mistake, it just ran
 /// out of room mid-write.
 pub fn is_truncated(finish_reason: &Option<String>) -> bool {
-    finish_reason.as_deref()
+    finish_reason
+        .as_deref()
         .map(|r| {
             let r = r.to_lowercase();
             r.contains("length") || r.contains("max_token")
@@ -83,7 +84,8 @@ fn get_key(provider: &str, profile_id: Option<i64>) -> Result<String> {
 /// send `tool_calls` either. Dropping it here is a last line of defense in
 /// case some other history-building path lets one through.
 fn build_messages(history: &[(String, String)]) -> Vec<serde_json::Value> {
-    history.iter()
+    history
+        .iter()
         .filter(|(role, content)| role != "assistant" || !content.trim().is_empty())
         .map(|(role, content)| serde_json::json!({ "role": role, "content": content }))
         .collect()
@@ -117,7 +119,8 @@ pub async fn stream_chat(
             google::stream(app, message_id, &key, model, messages).await
         }
         "ollama" => {
-            let base_url = get_key("ollama", profile_id).unwrap_or_else(|_| "http://localhost:11434".to_string());
+            let base_url = get_key("ollama", profile_id)
+                .unwrap_or_else(|_| "http://localhost:11434".to_string());
             ollama::stream(app, message_id, &base_url, model, messages).await
         }
         other => {
@@ -126,24 +129,44 @@ pub async fn stream_chat(
                 // OpenRouter asks integrators to identify their app via these
                 // headers; harmless no-ops for the other OpenAI-compatible vendors.
                 let extra_headers: &[(&str, &str)] = if other == "openrouter" {
-                    &[("HTTP-Referer", "https://github.com/acleefr/open-atelier"), ("X-Title", "Open Atelier")]
+                    &[
+                        ("HTTP-Referer", "https://github.com/acleefr/open-atelier"),
+                        ("X-Title", "Open Atelier"),
+                    ]
                 } else {
                     &[]
                 };
-                openai_compatible::stream(app, message_id, base_url, &key, model, messages, extra_headers).await
+                openai_compatible::stream(
+                    app,
+                    message_id,
+                    base_url,
+                    &key,
+                    model,
+                    messages,
+                    extra_headers,
+                )
+                .await
             } else {
-                Err(AtelierError::new(ErrorCode::Unsupported, format!("Unknown provider: {other}")))
+                Err(AtelierError::new(
+                    ErrorCode::Unsupported,
+                    format!("Unknown provider: {other}"),
+                ))
             }
         }
     }
 }
 
 pub fn emit_token(app: &AppHandle, message_id: i64, delta: &str) {
-    if message_id < 0 { return; } // sentinel for background calls (auto-title)
-    let _ = app.emit("chat://token", ChatToken {
-        message_id,
-        delta: delta.to_string(),
-    });
+    if message_id < 0 {
+        return;
+    } // sentinel for background calls (auto-title)
+    let _ = app.emit(
+        "chat://token",
+        ChatToken {
+            message_id,
+            delta: delta.to_string(),
+        },
+    );
 }
 
 #[cfg(test)]
@@ -159,7 +182,10 @@ mod tests {
             ("system".to_string(), "RESULT ...".to_string()),
         ];
         let messages = build_messages(&history);
-        let roles: Vec<&str> = messages.iter().map(|m| m["role"].as_str().unwrap()).collect();
+        let roles: Vec<&str> = messages
+            .iter()
+            .map(|m| m["role"].as_str().unwrap())
+            .collect();
         assert_eq!(roles, vec!["system", "user", "system"]);
     }
 

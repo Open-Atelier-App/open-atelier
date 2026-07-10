@@ -66,8 +66,12 @@ fn map_key(service: &str, account: &str) -> String {
 }
 
 fn app_data_dir() -> Result<PathBuf> {
-    let base = dirs::data_dir()
-        .ok_or_else(|| AtelierError::new(ErrorCode::KeychainError, "Could not resolve app data directory"))?;
+    let base = dirs::data_dir().ok_or_else(|| {
+        AtelierError::new(
+            ErrorCode::KeychainError,
+            "Could not resolve app data directory",
+        )
+    })?;
     let dir = base.join("com.openatelier.app");
     std::fs::create_dir_all(&dir)?;
     Ok(dir)
@@ -126,10 +130,18 @@ fn getrandom(buf: &mut [u8]) -> Result<()> {
     #[cfg(unix)]
     {
         use std::io::Read;
-        let mut f = std::fs::File::open("/dev/urandom")
-            .map_err(|e| AtelierError::new(ErrorCode::KeychainError, format!("Failed to open random source: {e}")))?;
-        f.read_exact(buf)
-            .map_err(|e| AtelierError::new(ErrorCode::KeychainError, format!("Failed to read random bytes: {e}")))?;
+        let mut f = std::fs::File::open("/dev/urandom").map_err(|e| {
+            AtelierError::new(
+                ErrorCode::KeychainError,
+                format!("Failed to open random source: {e}"),
+            )
+        })?;
+        f.read_exact(buf).map_err(|e| {
+            AtelierError::new(
+                ErrorCode::KeychainError,
+                format!("Failed to read random bytes: {e}"),
+            )
+        })?;
         Ok(())
     }
     #[cfg(windows)]
@@ -190,16 +202,27 @@ fn encrypt(key: &[u8; 32], plaintext: &str) -> Result<String> {
 }
 
 fn decrypt(key: &[u8; 32], encoded: &str) -> Result<String> {
-    let combined = base64_decode(encoded)
-        .map_err(|e| AtelierError::new(ErrorCode::KeychainError, format!("Corrupt credential data: {e}")))?;
+    let combined = base64_decode(encoded).map_err(|e| {
+        AtelierError::new(
+            ErrorCode::KeychainError,
+            format!("Corrupt credential data: {e}"),
+        )
+    })?;
     if combined.len() < 16 {
-        return Err(AtelierError::new(ErrorCode::KeychainError, "Corrupt credential data"));
+        return Err(AtelierError::new(
+            ErrorCode::KeychainError,
+            "Corrupt credential data",
+        ));
     }
     let mut nonce = [0u8; 16];
     nonce.copy_from_slice(&combined[..16]);
     let plain_bytes = xor_crypt(key, &nonce, &combined[16..]);
-    String::from_utf8(plain_bytes)
-        .map_err(|e| AtelierError::new(ErrorCode::KeychainError, format!("Corrupt credential data: {e}")))
+    String::from_utf8(plain_bytes).map_err(|e| {
+        AtelierError::new(
+            ErrorCode::KeychainError,
+            format!("Corrupt credential data: {e}"),
+        )
+    })
 }
 
 // ── Minimal base64 (no external dependency) ────────────────────────────────
@@ -207,7 +230,7 @@ fn decrypt(key: &[u8; 32], encoded: &str) -> Result<String> {
 const B64_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 fn base64_encode(data: &[u8]) -> String {
-    let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
         let b0 = chunk[0];
         let b1 = *chunk.get(1).unwrap_or(&0);
@@ -215,8 +238,16 @@ fn base64_encode(data: &[u8]) -> String {
         let n = ((b0 as u32) << 16) | ((b1 as u32) << 8) | (b2 as u32);
         out.push(B64_CHARS[((n >> 18) & 0x3F) as usize] as char);
         out.push(B64_CHARS[((n >> 12) & 0x3F) as usize] as char);
-        out.push(if chunk.len() > 1 { B64_CHARS[((n >> 6) & 0x3F) as usize] as char } else { '=' });
-        out.push(if chunk.len() > 2 { B64_CHARS[(n & 0x3F) as usize] as char } else { '=' });
+        out.push(if chunk.len() > 1 {
+            B64_CHARS[((n >> 6) & 0x3F) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            B64_CHARS[(n & 0x3F) as usize] as char
+        } else {
+            '='
+        });
     }
     out
 }
@@ -232,14 +263,20 @@ fn base64_decode(s: &str) -> std::result::Result<Vec<u8>, String> {
             _ => Err(format!("invalid base64 byte: {c}")),
         }
     }
-    let bytes: Vec<u8> = s.bytes().filter(|&b| b != b'=' && !b.is_ascii_whitespace()).collect();
+    let bytes: Vec<u8> = s
+        .bytes()
+        .filter(|&b| b != b'=' && !b.is_ascii_whitespace())
+        .collect();
     let mut out = Vec::with_capacity(bytes.len() / 4 * 3 + 3);
     for chunk in bytes.chunks(4) {
         let mut vals = [0u8; 4];
         for (i, &b) in chunk.iter().enumerate() {
             vals[i] = val(b)?;
         }
-        let n = ((vals[0] as u32) << 18) | ((vals[1] as u32) << 12) | ((vals[2] as u32) << 6) | (vals[3] as u32);
+        let n = ((vals[0] as u32) << 18)
+            | ((vals[1] as u32) << 12)
+            | ((vals[2] as u32) << 6)
+            | (vals[3] as u32);
         out.push(((n >> 16) & 0xFF) as u8);
         if chunk.len() > 2 {
             out.push(((n >> 8) & 0xFF) as u8);
@@ -300,7 +337,10 @@ fn local_get(service: &str, account: &str) -> Result<Option<String>> {
                     // the file by hand. Drop the bad entry so the next read
                     // reports "not configured" (same as never having saved
                     // it), which re-entering the key in Settings fixes.
-                    log::warn!("Dropping unreadable credential {}: {e}", map_key(service, account));
+                    log::warn!(
+                        "Dropping unreadable credential {}: {e}",
+                        map_key(service, account)
+                    );
                     let _ = local_delete(service, account);
                     Ok(None)
                 }
@@ -383,7 +423,10 @@ fn profile_local_get(profile_id: i64, service: &str, account: &str) -> Result<Op
                     // Same self-healing as local_get above — an unreadable
                     // entry would otherwise permanently block this provider
                     // for this profile.
-                    log::warn!("Dropping unreadable profile credential {}: {e}", map_key(service, account));
+                    log::warn!(
+                        "Dropping unreadable profile credential {}: {e}",
+                        map_key(service, account)
+                    );
                     let mut file = load_cred_file(&dir)?;
                     if file.entries.remove(&map_key(service, account)).is_some() {
                         let _ = save_cred_file(&dir, &file);
@@ -412,12 +455,21 @@ fn profile_local_has(profile_id: i64, service: &str, account: &str) -> bool {
         .unwrap_or(false)
 }
 
-pub fn profile_store_set(profile_id: i64, service: &str, account: &str, value: &str) -> Result<StorageBackend> {
+pub fn profile_store_set(
+    profile_id: i64,
+    service: &str,
+    account: &str,
+    value: &str,
+) -> Result<StorageBackend> {
     profile_local_set(profile_id, service, account, value)?;
     Ok(StorageBackend::LocalEncrypted)
 }
 
-pub fn profile_store_get(profile_id: i64, service: &str, account: &str) -> Result<Option<(String, StorageBackend)>> {
+pub fn profile_store_get(
+    profile_id: i64,
+    service: &str,
+    account: &str,
+) -> Result<Option<(String, StorageBackend)>> {
     match profile_local_get(profile_id, service, account)? {
         Some(v) => Ok(Some((v, StorageBackend::LocalEncrypted))),
         None => Ok(None),
@@ -428,7 +480,11 @@ pub fn profile_store_delete(profile_id: i64, service: &str, account: &str) -> Re
     profile_local_delete(profile_id, service, account)
 }
 
-pub fn profile_store_backend(profile_id: i64, service: &str, account: &str) -> Option<StorageBackend> {
+pub fn profile_store_backend(
+    profile_id: i64,
+    service: &str,
+    account: &str,
+) -> Option<StorageBackend> {
     if profile_local_has(profile_id, service, account) {
         Some(StorageBackend::LocalEncrypted)
     } else {

@@ -1,8 +1,8 @@
+use super::router::{emit_token, StreamResult};
+use super::sse::{friendly_stream_error, LineBuffer};
+use crate::error::{AtelierError, ErrorCode, Result};
 use futures_util::StreamExt;
 use tauri::AppHandle;
-use crate::error::{AtelierError, ErrorCode, Result};
-use super::router::{emit_token, StreamResult};
-use super::sse::{LineBuffer, friendly_stream_error};
 
 pub async fn stream(
     app: &AppHandle,
@@ -21,9 +21,7 @@ pub async fn stream(
 
     let system = build_system_field(&messages);
 
-    let chat_messages: Vec<_> = messages.iter()
-        .filter(|m| m["role"] != "system")
-        .collect();
+    let chat_messages: Vec<_> = messages.iter().filter(|m| m["role"] != "system").collect();
 
     let mut body = serde_json::json!({
         "model": model,
@@ -41,7 +39,8 @@ pub async fn stream(
         .header("anthropic-version", "2023-06-01")
         .header("Content-Type", "application/json")
         .json(&body)
-        .send().await
+        .send()
+        .await
         .map_err(|e| AtelierError::new(ErrorCode::ProviderUnavailable, e.to_string()))?;
 
     if !resp.status().is_success() {
@@ -49,8 +48,14 @@ pub async fn stream(
         let body = resp.text().await.unwrap_or_default();
         return Err(match status {
             401 => AtelierError::new(ErrorCode::ProviderUnauthorized, "Invalid Anthropic API key"),
-            429 => AtelierError::new(ErrorCode::ProviderRateLimited, "Anthropic rate limit exceeded"),
-            _ => AtelierError::new(ErrorCode::ProviderError, format!("Anthropic error {status}: {body}")),
+            429 => AtelierError::new(
+                ErrorCode::ProviderRateLimited,
+                "Anthropic rate limit exceeded",
+            ),
+            _ => AtelierError::new(
+                ErrorCode::ProviderError,
+                format!("Anthropic error {status}: {body}"),
+            ),
         });
     }
 
@@ -62,7 +67,12 @@ pub async fn stream(
     let mut line_buf = LineBuffer::new();
 
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| AtelierError::new(ErrorCode::ProviderUnavailable, friendly_stream_error(&e.to_string())))?;
+        let chunk = chunk.map_err(|e| {
+            AtelierError::new(
+                ErrorCode::ProviderUnavailable,
+                friendly_stream_error(&e.to_string()),
+            )
+        })?;
         for line in line_buf.push_chunk(&chunk) {
             if let Some(data) = line.strip_prefix("data: ") {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
@@ -89,7 +99,12 @@ pub async fn stream(
         }
     }
 
-    Ok(StreamResult { content: full_content, input_tokens, output_tokens, finish_reason })
+    Ok(StreamResult {
+        content: full_content,
+        input_tokens,
+        output_tokens,
+        finish_reason,
+    })
 }
 
 /// Anthropic only accepts a single top-level `system` field, not interleaved
@@ -98,7 +113,8 @@ pub async fn stream(
 /// first system message would silently drop every trigger result after turn
 /// one. Concatenate all of them instead.
 fn build_system_field(messages: &[serde_json::Value]) -> Option<String> {
-    let system_parts: Vec<&str> = messages.iter()
+    let system_parts: Vec<&str> = messages
+        .iter()
         .filter(|m| m["role"] == "system")
         .filter_map(|m| m["content"].as_str())
         .collect();
@@ -116,9 +132,7 @@ mod tests {
 
     #[test]
     fn no_system_messages_returns_none() {
-        let messages = vec![
-            serde_json::json!({ "role": "user", "content": "hi" }),
-        ];
+        let messages = vec![serde_json::json!({ "role": "user", "content": "hi" })];
         assert_eq!(build_system_field(&messages), None);
     }
 
@@ -128,7 +142,10 @@ mod tests {
             serde_json::json!({ "role": "system", "content": "You are Atelier." }),
             serde_json::json!({ "role": "user", "content": "hi" }),
         ];
-        assert_eq!(build_system_field(&messages), Some("You are Atelier.".to_string()));
+        assert_eq!(
+            build_system_field(&messages),
+            Some("You are Atelier.".to_string())
+        );
     }
 
     #[test]

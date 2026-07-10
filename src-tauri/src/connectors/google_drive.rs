@@ -5,7 +5,8 @@
 //! - An OAuth access token from the native "Connect with Google" flow (see
 //!   google_oauth.rs; `fetch_file_oauth`) — a real user-scoped token that
 //!   can read the signed-in user's own private files too.
-//! run_turn (see commands::chat) prefers OAuth when connected, falling
+//!
+//! `run_turn` (see `commands::chat`) prefers OAuth when connected, falling
 //! back to the API-key path otherwise.
 
 const MAX_FILE_BYTES: usize = 200_000;
@@ -25,7 +26,10 @@ pub async fn test_connection(api_key: &str) -> Result<String, String> {
     let url = format!(
         "https://www.googleapis.com/drive/v3/files/__atelier-connection-test__?fields=id&key={api_key}"
     );
-    let resp = client().get(&url).send().await
+    let resp = client()
+        .get(&url)
+        .send()
+        .await
         .map_err(|e| format!("Could not reach Google Drive: {e}"))?;
 
     match resp.status() {
@@ -41,13 +45,19 @@ pub async fn test_connection(api_key: &str) -> Result<String, String> {
 /// separate export endpoint with a target MIME type, which isn't
 /// supported here; such files come back as a clear, distinct error.
 pub async fn fetch_file(file_id: &str, api_key: &str) -> Result<String, String> {
-    let url = format!("https://www.googleapis.com/drive/v3/files/{file_id}?alt=media&key={api_key}");
-    let resp = client().get(&url).send().await
+    let url =
+        format!("https://www.googleapis.com/drive/v3/files/{file_id}?alt=media&key={api_key}");
+    let resp = client()
+        .get(&url)
+        .send()
+        .await
         .map_err(|e| format!("Could not reach Google Drive: {e}"))?;
 
     let status = resp.status();
     if status == reqwest::StatusCode::NOT_FOUND {
-        return Err(format!("File not found, or not shared as \"Anyone with the link\": {file_id}"));
+        return Err(format!(
+            "File not found, or not shared as \"Anyone with the link\": {file_id}"
+        ));
     }
     if status == reqwest::StatusCode::FORBIDDEN {
         let body = resp.text().await.unwrap_or_default();
@@ -64,9 +74,15 @@ pub async fn fetch_file(file_id: &str, api_key: &str) -> Result<String, String> 
         return Err(format!("Google Drive returned {status} for {file_id}"));
     }
 
-    let bytes = resp.bytes().await.map_err(|e| format!("Failed to read response: {e}"))?;
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read response: {e}"))?;
     if bytes.len() > MAX_FILE_BYTES {
-        return Err(format!("{file_id} is too large to read here ({} bytes)", bytes.len()));
+        return Err(format!(
+            "{file_id} is too large to read here ({} bytes)",
+            bytes.len()
+        ));
     }
     String::from_utf8(bytes.to_vec())
         .map_err(|_| format!("{file_id} does not look like a text file"))
@@ -83,9 +99,16 @@ pub enum OAuthFetchError {
 /// Bearer access token from the native OAuth flow instead of a bare API
 /// key — this is what actually lets GDRIVE_READ reach the user's own
 /// private files, not just link-shared ones.
-pub async fn fetch_file_oauth(file_id: &str, access_token: &str) -> Result<String, OAuthFetchError> {
+pub async fn fetch_file_oauth(
+    file_id: &str,
+    access_token: &str,
+) -> Result<String, OAuthFetchError> {
     let url = format!("https://www.googleapis.com/drive/v3/files/{file_id}?alt=media");
-    let resp = client().get(&url).bearer_auth(access_token).send().await
+    let resp = client()
+        .get(&url)
+        .bearer_auth(access_token)
+        .send()
+        .await
         .map_err(|e| OAuthFetchError::Other(format!("Could not reach Google Drive: {e}")))?;
 
     let status = resp.status();
@@ -93,7 +116,9 @@ pub async fn fetch_file_oauth(file_id: &str, access_token: &str) -> Result<Strin
         return Err(OAuthFetchError::AuthExpired);
     }
     if status == reqwest::StatusCode::NOT_FOUND {
-        return Err(OAuthFetchError::Other(format!("File not found, or not accessible to this account: {file_id}")));
+        return Err(OAuthFetchError::Other(format!(
+            "File not found, or not accessible to this account: {file_id}"
+        )));
     }
     if status == reqwest::StatusCode::FORBIDDEN {
         let body = resp.text().await.unwrap_or_default();
@@ -104,15 +129,25 @@ pub async fn fetch_file_oauth(file_id: &str, access_token: &str) -> Result<Strin
                  to a plain file first, then share that."
             )));
         }
-        return Err(OAuthFetchError::Other(format!("Access denied for {file_id}")));
+        return Err(OAuthFetchError::Other(format!(
+            "Access denied for {file_id}"
+        )));
     }
     if !status.is_success() {
-        return Err(OAuthFetchError::Other(format!("Google Drive returned {status} for {file_id}")));
+        return Err(OAuthFetchError::Other(format!(
+            "Google Drive returned {status} for {file_id}"
+        )));
     }
 
-    let bytes = resp.bytes().await.map_err(|e| OAuthFetchError::Other(format!("Failed to read response: {e}")))?;
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| OAuthFetchError::Other(format!("Failed to read response: {e}")))?;
     if bytes.len() > MAX_FILE_BYTES {
-        return Err(OAuthFetchError::Other(format!("{file_id} is too large to read here ({} bytes)", bytes.len())));
+        return Err(OAuthFetchError::Other(format!(
+            "{file_id} is too large to read here ({} bytes)",
+            bytes.len()
+        )));
     }
     String::from_utf8(bytes.to_vec())
         .map_err(|_| OAuthFetchError::Other(format!("{file_id} does not look like a text file")))
@@ -129,7 +164,8 @@ mod tests {
         match test_connection("not-a-real-key").await {
             Ok(_) => panic!("expected a malformed key to be rejected"),
             Err(e) => assert!(
-                e.contains("Google rejected this API key") || e.contains("Could not reach Google Drive"),
+                e.contains("Google rejected this API key")
+                    || e.contains("Could not reach Google Drive"),
                 "unexpected error shape: {e}",
             ),
         }
@@ -140,7 +176,10 @@ mod tests {
         match fetch_file("some-file-id", "not-a-real-key").await {
             Ok(_) => panic!("expected a malformed key to be rejected"),
             Err(e) => assert!(
-                e.contains("Access denied") || e.contains("not found") || e.contains("Could not reach Google Drive") || e.contains("Google Drive returned"),
+                e.contains("Access denied")
+                    || e.contains("not found")
+                    || e.contains("Could not reach Google Drive")
+                    || e.contains("Google Drive returned"),
                 "unexpected error shape: {e}",
             ),
         }

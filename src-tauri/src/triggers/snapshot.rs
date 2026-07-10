@@ -1,7 +1,7 @@
+use crate::error::{AtelierError, Result};
+use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
-use serde::Serialize;
-use crate::error::{AtelierError, Result};
 
 const MAX_SNAPSHOTS_PER_CONVERSATION: usize = 50;
 const MAX_SNAPSHOT_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10 MB
@@ -28,23 +28,28 @@ pub struct SnapshotStore {
     inner: Mutex<HashMap<i64, VecDeque<FileSnapshot>>>,
 }
 
+impl Default for SnapshotStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SnapshotStore {
     pub fn new() -> Self {
-        Self { inner: Mutex::new(HashMap::new()) }
+        Self {
+            inner: Mutex::new(HashMap::new()),
+        }
     }
 
-    pub fn capture(
-        &self,
-        conversation_id: i64,
-        action: &str,
-        file_path: &str,
-    ) -> Result<()> {
+    pub fn capture(&self, conversation_id: i64, action: &str, file_path: &str) -> Result<()> {
         let previous_content = if std::path::Path::new(file_path).exists() {
-            let meta = std::fs::metadata(file_path)
-                .map_err(|e| AtelierError::io(e.to_string()))?;
+            let meta = std::fs::metadata(file_path).map_err(|e| AtelierError::io(e.to_string()))?;
 
             if meta.len() > MAX_SNAPSHOT_FILE_SIZE {
-                log::warn!("Skipping snapshot for {file_path}: file too large ({} bytes)", meta.len());
+                log::warn!(
+                    "Skipping snapshot for {file_path}: file too large ({} bytes)",
+                    meta.len()
+                );
                 None
             } else {
                 Some(std::fs::read(file_path).map_err(|e| AtelierError::io(e.to_string()))?)
@@ -62,7 +67,10 @@ impl SnapshotStore {
             timestamp: chrono::Utc::now().timestamp_millis(),
         };
 
-        let mut store = self.inner.lock().map_err(|_| AtelierError::internal("snapshot lock"))?;
+        let mut store = self
+            .inner
+            .lock()
+            .map_err(|_| AtelierError::internal("snapshot lock"))?;
         let queue = store.entry(conversation_id).or_insert_with(VecDeque::new);
 
         if queue.len() >= MAX_SNAPSHOTS_PER_CONVERSATION {
@@ -80,8 +88,7 @@ impl SnapshotStore {
         new_path: &str,
     ) -> Result<()> {
         let previous_content = if std::path::Path::new(old_path).exists() {
-            let meta = std::fs::metadata(old_path)
-                .map_err(|e| AtelierError::io(e.to_string()))?;
+            let meta = std::fs::metadata(old_path).map_err(|e| AtelierError::io(e.to_string()))?;
             if meta.len() > MAX_SNAPSHOT_FILE_SIZE {
                 None
             } else {
@@ -100,7 +107,10 @@ impl SnapshotStore {
             timestamp: chrono::Utc::now().timestamp_millis(),
         };
 
-        let mut store = self.inner.lock().map_err(|_| AtelierError::internal("snapshot lock"))?;
+        let mut store = self
+            .inner
+            .lock()
+            .map_err(|_| AtelierError::internal("snapshot lock"))?;
         let queue = store.entry(conversation_id).or_insert_with(VecDeque::new);
 
         if queue.len() >= MAX_SNAPSHOTS_PER_CONVERSATION {
@@ -112,12 +122,17 @@ impl SnapshotStore {
     }
 
     pub fn undo_last(&self, conversation_id: i64) -> Result<UndoResult> {
-        let mut store = self.inner.lock().map_err(|_| AtelierError::internal("snapshot lock"))?;
+        let mut store = self
+            .inner
+            .lock()
+            .map_err(|_| AtelierError::internal("snapshot lock"))?;
 
-        let queue = store.get_mut(&conversation_id)
+        let queue = store
+            .get_mut(&conversation_id)
             .ok_or_else(|| AtelierError::internal("No snapshots for this conversation"))?;
 
-        let snapshot = queue.pop_back()
+        let snapshot = queue
+            .pop_back()
             .ok_or_else(|| AtelierError::internal("No snapshots to undo"))?;
 
         match snapshot.action.as_str() {
@@ -200,7 +215,8 @@ mod tests {
     use std::fs;
 
     fn temp_dir() -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("atelier_snapshot_test_{}", uuid::Uuid::new_v4()));
+        let dir =
+            std::env::temp_dir().join(format!("atelier_snapshot_test_{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();
         dir
     }

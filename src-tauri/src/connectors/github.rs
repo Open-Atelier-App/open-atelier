@@ -29,12 +29,18 @@ pub async fn test_connection(token: &str) -> Result<String, String> {
         .map_err(|e| format!("Could not reach GitHub: {e}"))?;
 
     if !resp.status().is_success() {
-        return Err(format!("GitHub rejected this token (status {})", resp.status()));
+        return Err(format!(
+            "GitHub rejected this token (status {})",
+            resp.status()
+        ));
     }
 
-    let body: serde_json::Value = resp.json().await
+    let body: serde_json::Value = resp
+        .json()
+        .await
         .map_err(|e| format!("Unexpected response from GitHub: {e}"))?;
-    body.get("login").and_then(|v| v.as_str())
+    body.get("login")
+        .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .ok_or_else(|| "GitHub response had no username".to_string())
 }
@@ -43,8 +49,13 @@ pub async fn test_connection(token: &str) -> Result<String, String> {
 /// API. `owner_repo` is "owner/repo"; `token` is optional (omitting it
 /// only works for public repos, and hits GitHub's much lower unauthenticated
 /// rate limit).
-pub async fn fetch_file(owner_repo: &str, path: &str, token: Option<&str>) -> Result<String, String> {
-    let (owner, repo) = owner_repo.split_once('/')
+pub async fn fetch_file(
+    owner_repo: &str,
+    path: &str,
+    token: Option<&str>,
+) -> Result<String, String> {
+    let (owner, repo) = owner_repo
+        .split_once('/')
         .ok_or_else(|| format!("Expected \"owner/repo\", got: {owner_repo}"))?;
 
     let url = format!(
@@ -59,19 +70,30 @@ pub async fn fetch_file(owner_repo: &str, path: &str, token: Option<&str>) -> Re
         req = req.header("Authorization", format!("Bearer {t}"));
     }
 
-    let resp = req.send().await.map_err(|e| format!("Could not reach GitHub: {e}"))?;
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| format!("Could not reach GitHub: {e}"))?;
 
     let status = resp.status();
     if status == reqwest::StatusCode::NOT_FOUND {
-        return Err(format!("Not found: {owner_repo}/{path} (or the repo is private and no token is set)"));
+        return Err(format!(
+            "Not found: {owner_repo}/{path} (or the repo is private and no token is set)"
+        ));
     }
     if !status.is_success() {
         return Err(format!("GitHub returned {status} for {owner_repo}/{path}"));
     }
 
-    let bytes = resp.bytes().await.map_err(|e| format!("Failed to read response: {e}"))?;
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read response: {e}"))?;
     if bytes.len() > MAX_FILE_BYTES {
-        return Err(format!("{owner_repo}/{path} is too large to read here ({} bytes)", bytes.len()));
+        return Err(format!(
+            "{owner_repo}/{path} is too large to read here ({} bytes)",
+            bytes.len()
+        ));
     }
 
     String::from_utf8(bytes.to_vec())
@@ -84,7 +106,9 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_file_rejects_malformed_owner_repo() {
-        let err = fetch_file("not-a-valid-owner-repo", "README.md", None).await.unwrap_err();
+        let err = fetch_file("not-a-valid-owner-repo", "README.md", None)
+            .await
+            .unwrap_err();
         assert!(err.contains("Expected \"owner/repo\""));
     }
 
@@ -100,7 +124,9 @@ mod tests {
         match fetch_file("octocat/Hello-World", "README", None).await {
             Ok(content) => assert!(!content.is_empty()),
             Err(e) => assert!(
-                e.contains("Could not reach GitHub") || e.contains("GitHub returned") || e.contains("Not found"),
+                e.contains("Could not reach GitHub")
+                    || e.contains("GitHub returned")
+                    || e.contains("Not found"),
                 "unexpected error shape: {e}",
             ),
         }

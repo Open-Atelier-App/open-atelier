@@ -1,10 +1,12 @@
-use std::path::Path;
-use tauri::{State, AppHandle, Emitter, Manager};
-use crate::db::{Db, now_ms};
+use crate::db::{now_ms, Db};
 use crate::error::{AtelierError, Result};
-use crate::models::{Conversation, Message, Citation, ToolCall, ConversationWithMessages, ChatDone, ChatContinuation};
 use crate::llm;
-use crate::triggers::{parser, executor, formatter, snapshot::SnapshotStore};
+use crate::models::{
+    ChatContinuation, ChatDone, Citation, Conversation, ConversationWithMessages, Message, ToolCall,
+};
+use crate::triggers::{executor, formatter, parser, snapshot::SnapshotStore};
+use std::path::Path;
+use tauri::{AppHandle, Emitter, Manager, State};
 
 /// Caps automatic READ/LIST -> continue turns per user message, so a model
 /// stuck in a read-loop (or a bug that always emits a READ) can't run away.
@@ -32,7 +34,8 @@ fn synthesize_confirmation(actions: &[(String, Option<String>)]) -> String {
         }
     }
 
-    let parts: Vec<String> = actions.iter()
+    let parts: Vec<String> = actions
+        .iter()
         .map(|(action, path)| match path {
             // PLAN's "path" slot actually carries the plan's title, not a
             // real file — linking it would send the user to open a
@@ -77,7 +80,12 @@ fn fallback_title(content: &str) -> String {
         first.make_ascii_uppercase();
     }
     if title.chars().count() > MAX_CHARS {
-        title = title.chars().take(MAX_CHARS).collect::<String>().trim_end().to_string();
+        title = title
+            .chars()
+            .take(MAX_CHARS)
+            .collect::<String>()
+            .trim_end()
+            .to_string();
         title.push('…');
     }
     title
@@ -124,33 +132,61 @@ async fn handle_connector_read_trigger<F, Fut>(
 
     let token = profile_id.and_then(|pid| {
         let name = crate::commands::settings::cred_keyring_name(cred_provider, "api_key");
-        crate::commands::cred_store::profile_store_get(pid, crate::commands::settings::SERVICE_NAME, &name)
-            .ok().flatten().map(|(v, _)| v)
+        crate::commands::cred_store::profile_store_get(
+            pid,
+            crate::commands::settings::SERVICE_NAME,
+            &name,
+        )
+        .ok()
+        .flatten()
+        .map(|(v, _)| v)
     });
     let Some(token) = token else {
         let detail = format!("{connector_label} connector is not enabled — add a token in Settings > Connectors first");
         log::warn!("Trigger executed (conversation {conv_id}): {action} FAIL {target} - {detail}");
         trigger_feedback.push(formatter::format_result(action, "FAIL", &detail));
         *any_trigger_failed = true;
-        let result = executor::TriggerResult { action: action.into(), status: "FAIL".into(), detail, file_path: Some(target) };
+        let result = executor::TriggerResult {
+            action: action.into(),
+            status: "FAIL".into(),
+            detail,
+            file_path: Some(target),
+        };
         let _ = app.emit("trigger://executed", &result);
         return;
     };
 
     match fetch(token).await {
         Ok(content) => {
-            log::info!("Trigger executed (conversation {conv_id}): {action} OK {target} ({} chars)", content.len());
-            trigger_feedback.push(formatter::format_result(action, "OK", &format!("{} characters read", content.len())));
+            log::info!(
+                "Trigger executed (conversation {conv_id}): {action} OK {target} ({} chars)",
+                content.len()
+            );
+            trigger_feedback.push(formatter::format_result(
+                action,
+                "OK",
+                &format!("{} characters read", content.len()),
+            ));
             trigger_feedback.push(formatter::format_content(&target, &content));
             *has_content_feedback = true;
-            let result = executor::TriggerResult { action: action.into(), status: "OK".into(), detail: format!("{} characters read", content.len()), file_path: Some(target) };
+            let result = executor::TriggerResult {
+                action: action.into(),
+                status: "OK".into(),
+                detail: format!("{} characters read", content.len()),
+                file_path: Some(target),
+            };
             let _ = app.emit("trigger://executed", &result);
         }
         Err(e) => {
             log::warn!("Trigger executed (conversation {conv_id}): {action} FAIL {target} - {e}");
             trigger_feedback.push(formatter::format_result(action, "FAIL", &e));
             *any_trigger_failed = true;
-            let result = executor::TriggerResult { action: action.into(), status: "FAIL".into(), detail: e, file_path: Some(target) };
+            let result = executor::TriggerResult {
+                action: action.into(),
+                status: "FAIL".into(),
+                detail: e,
+                file_path: Some(target),
+            };
             let _ = app.emit("trigger://executed", &result);
         }
     }
@@ -188,55 +224,98 @@ async fn handle_gdrive_read(
     let cred = |cred_type: &str| -> Option<String> {
         profile_id.and_then(|pid| {
             let name = crate::commands::settings::cred_keyring_name("google_drive", cred_type);
-            crate::commands::cred_store::profile_store_get(pid, crate::commands::settings::SERVICE_NAME, &name)
-                .ok().flatten().map(|(v, _)| v)
+            crate::commands::cred_store::profile_store_get(
+                pid,
+                crate::commands::settings::SERVICE_NAME,
+                &name,
+            )
+            .ok()
+            .flatten()
+            .map(|(v, _)| v)
         })
     };
 
     use crate::connectors::google_drive::OAuthFetchError;
-    let outcome: std::result::Result<String, String> = if let Some(access_token) = cred("bearer_token") {
+    let outcome: std::result::Result<String, String> = if let Some(access_token) =
+        cred("bearer_token")
+    {
         match crate::connectors::google_drive::fetch_file_oauth(file_id, &access_token).await {
             Ok(content) => Ok(content),
             Err(OAuthFetchError::Other(e)) => Err(e),
             Err(OAuthFetchError::AuthExpired) => match cred("oauth_refresh_token") {
-                Some(refresh_token) => match crate::connectors::google_oauth::refresh_access_token(&refresh_token).await {
-                    Ok(new_access_token) => {
-                        if let Some(pid) = profile_id {
-                            let name = crate::commands::settings::cred_keyring_name("google_drive", "bearer_token");
-                            let _ = crate::commands::cred_store::profile_store_set(pid, crate::commands::settings::SERVICE_NAME, &name, &new_access_token);
-                        }
-                        match crate::connectors::google_drive::fetch_file_oauth(file_id, &new_access_token).await {
+                Some(refresh_token) => {
+                    match crate::connectors::google_oauth::refresh_access_token(&refresh_token)
+                        .await
+                    {
+                        Ok(new_access_token) => {
+                            if let Some(pid) = profile_id {
+                                let name = crate::commands::settings::cred_keyring_name(
+                                    "google_drive",
+                                    "bearer_token",
+                                );
+                                let _ = crate::commands::cred_store::profile_store_set(
+                                    pid,
+                                    crate::commands::settings::SERVICE_NAME,
+                                    &name,
+                                    &new_access_token,
+                                );
+                            }
+                            match crate::connectors::google_drive::fetch_file_oauth(file_id, &new_access_token).await {
                             Ok(content) => Ok(content),
                             Err(OAuthFetchError::Other(e)) => Err(e),
                             Err(OAuthFetchError::AuthExpired) =>
                                 Err("Google Drive sign-in expired — reconnect it in Settings > Connectors".to_string()),
                         }
+                        }
+                        Err(e) => Err(e),
                     }
-                    Err(e) => Err(e),
-                },
-                None => Err("Google Drive sign-in expired — reconnect it in Settings > Connectors".to_string()),
+                }
+                None => Err(
+                    "Google Drive sign-in expired — reconnect it in Settings > Connectors"
+                        .to_string(),
+                ),
             },
         }
     } else if let Some(api_key) = cred("api_key") {
         crate::connectors::google_drive::fetch_file(file_id, &api_key).await
     } else {
-        Err("Google Drive connector is not enabled — connect it in Settings > Connectors first".to_string())
+        Err(
+            "Google Drive connector is not enabled — connect it in Settings > Connectors first"
+                .to_string(),
+        )
     };
 
     match outcome {
         Ok(content) => {
-            log::info!("Trigger executed (conversation {conv_id}): {ACTION} OK {file_id} ({} chars)", content.len());
-            trigger_feedback.push(formatter::format_result(ACTION, "OK", &format!("{} characters read", content.len())));
+            log::info!(
+                "Trigger executed (conversation {conv_id}): {ACTION} OK {file_id} ({} chars)",
+                content.len()
+            );
+            trigger_feedback.push(formatter::format_result(
+                ACTION,
+                "OK",
+                &format!("{} characters read", content.len()),
+            ));
             trigger_feedback.push(formatter::format_content(file_id, &content));
             *has_content_feedback = true;
-            let result = executor::TriggerResult { action: ACTION.into(), status: "OK".into(), detail: format!("{} characters read", content.len()), file_path: Some(file_id.to_string()) };
+            let result = executor::TriggerResult {
+                action: ACTION.into(),
+                status: "OK".into(),
+                detail: format!("{} characters read", content.len()),
+                file_path: Some(file_id.to_string()),
+            };
             let _ = app.emit("trigger://executed", &result);
         }
         Err(e) => {
             log::warn!("Trigger executed (conversation {conv_id}): {ACTION} FAIL {file_id} - {e}");
             trigger_feedback.push(formatter::format_result(ACTION, "FAIL", &e));
             *any_trigger_failed = true;
-            let result = executor::TriggerResult { action: ACTION.into(), status: "FAIL".into(), detail: e, file_path: Some(file_id.to_string()) };
+            let result = executor::TriggerResult {
+                action: ACTION.into(),
+                status: "FAIL".into(),
+                detail: e,
+                file_path: Some(file_id.to_string()),
+            };
             let _ = app.emit("trigger://executed", &result);
         }
     }
@@ -261,18 +340,24 @@ fn build_related_context(conn: &rusqlite::Connection, workspace_id: i64) -> Stri
         }
     }
 
-    let children: Vec<(String, String)> = conn.prepare(
-        "SELECT name, path FROM workspaces WHERE parent_workspace_id = ?1"
-    ).and_then(|mut stmt| {
-        stmt.query_map([workspace_id], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()
-    }).unwrap_or_default();
+    let children: Vec<(String, String)> = conn
+        .prepare("SELECT name, path FROM workspaces WHERE parent_workspace_id = ?1")
+        .and_then(|mut stmt| {
+            stmt.query_map([workspace_id], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect::<rusqlite::Result<Vec<_>>>()
+        })
+        .unwrap_or_default();
     for (child_name, child_path) in &children {
         if let Some(ctx) = llm::skills::read_context_md(child_path) {
             blocks.push(format!("### Sub-project \"{child_name}\"\n{ctx}"));
         }
     }
 
-    if blocks.is_empty() { String::new() } else { format!("\n\n## Related project context\n{}", blocks.join("\n\n")) }
+    if blocks.is_empty() {
+        String::new()
+    } else {
+        format!("\n\n## Related project context\n{}", blocks.join("\n\n"))
+    }
 }
 
 const CONVERSATION_COLUMNS: &str = "id, workspace_id, title, created_at, updated_at, provider, model, summary, compressed_memory, compressed_at, group_id";
@@ -322,7 +407,11 @@ pub fn conversation_list(workspace_id: i64, db: State<Db>) -> Result<Vec<Convers
 }
 
 #[tauri::command]
-pub fn conversation_create(workspace_id: i64, title: Option<String>, db: State<Db>) -> Result<Conversation> {
+pub fn conversation_create(
+    workspace_id: i64,
+    title: Option<String>,
+    db: State<Db>,
+) -> Result<Conversation> {
     let now = now_ms();
     let title = title.unwrap_or_else(|| "New conversation".to_string());
     let db = db.lock().map_err(|_| AtelierError::internal("lock"))?;
@@ -333,7 +422,8 @@ pub fn conversation_create(workspace_id: i64, title: Option<String>, db: State<D
     let id = db.last_insert_rowid();
     let conv = db.query_row(
         &format!("SELECT {CONVERSATION_COLUMNS} FROM conversations WHERE id = ?1"),
-        [id], row_to_conversation,
+        [id],
+        row_to_conversation,
     )?;
     Ok(conv)
 }
@@ -341,10 +431,14 @@ pub fn conversation_create(workspace_id: i64, title: Option<String>, db: State<D
 #[tauri::command]
 pub fn conversation_rename(id: i64, title: String, db: State<Db>) -> Result<Conversation> {
     let db = db.lock().map_err(|_| AtelierError::internal("lock"))?;
-    db.execute("UPDATE conversations SET title = ?1 WHERE id = ?2", rusqlite::params![title, id])?;
+    db.execute(
+        "UPDATE conversations SET title = ?1 WHERE id = ?2",
+        rusqlite::params![title, id],
+    )?;
     let conv = db.query_row(
         &format!("SELECT {CONVERSATION_COLUMNS} FROM conversations WHERE id = ?1"),
-        [id], row_to_conversation,
+        [id],
+        row_to_conversation,
     )?;
     Ok(conv)
 }
@@ -364,23 +458,29 @@ pub fn conversation_delete(id: i64, db: State<Db>) -> Result<()> {
 pub fn conversation_archive(id: i64, db: State<Db>) -> Result<()> {
     let (conversation, messages, ws_path): (Conversation, Vec<Message>, String) = {
         let db = db.lock().map_err(|_| AtelierError::internal("lock"))?;
-        let conversation = db.query_row(
-            &format!("SELECT {CONVERSATION_COLUMNS} FROM conversations WHERE id = ?1"),
-            [id], row_to_conversation,
-        ).map_err(|_| AtelierError::not_found("Conversation not found"))?;
+        let conversation = db
+            .query_row(
+                &format!("SELECT {CONVERSATION_COLUMNS} FROM conversations WHERE id = ?1"),
+                [id],
+                row_to_conversation,
+            )
+            .map_err(|_| AtelierError::not_found("Conversation not found"))?;
 
         let mut stmt = db.prepare(
             "SELECT id, conversation_id, role, content, created_at, token_count, input_tokens, output_tokens, error, status, provider, model, display_override
              FROM messages WHERE conversation_id = ?1 ORDER BY created_at ASC"
         )?;
-        let messages: Vec<Message> = stmt.query_map([id], row_to_message)?
+        let messages: Vec<Message> = stmt
+            .query_map([id], row_to_message)?
             .collect::<rusqlite::Result<_>>()?;
 
-        let ws_path: String = db.query_row(
-            "SELECT path FROM workspaces WHERE id = ?1",
-            [conversation.workspace_id],
-            |r| r.get(0),
-        ).map_err(|_| AtelierError::not_found("Workspace not found"))?;
+        let ws_path: String = db
+            .query_row(
+                "SELECT path FROM workspaces WHERE id = ?1",
+                [conversation.workspace_id],
+                |r| r.get(0),
+            )
+            .map_err(|_| AtelierError::not_found("Workspace not found"))?;
 
         (conversation, messages, ws_path)
     };
@@ -390,16 +490,31 @@ pub fn conversation_archive(id: i64, db: State<Db>) -> Result<()> {
 
     let mut transcript = String::new();
     transcript.push_str(&format!("# {}\n\n", conversation.title));
-    transcript.push_str(&format!("- **Archived:** {}\n", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")));
-    transcript.push_str(&format!("- **Started:** {}\n", created.format("%Y-%m-%d %H:%M:%S UTC")));
+    transcript.push_str(&format!(
+        "- **Archived:** {}\n",
+        chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+    ));
+    transcript.push_str(&format!(
+        "- **Started:** {}\n",
+        created.format("%Y-%m-%d %H:%M:%S UTC")
+    ));
     if let Some(provider) = &conversation.provider {
-        transcript.push_str(&format!("- **Model:** {provider} / {}\n", conversation.model.as_deref().unwrap_or("?")));
+        transcript.push_str(&format!(
+            "- **Model:** {provider} / {}\n",
+            conversation.model.as_deref().unwrap_or("?")
+        ));
     }
     transcript.push_str(&format!("- **Messages:** {}\n\n---\n\n", messages.len()));
 
     for m in &messages {
-        if m.role == "system" || m.content.trim().is_empty() { continue; }
-        let who = match m.role.as_str() { "user" => "User", "assistant" => "Assistant", other => other };
+        if m.role == "system" || m.content.trim().is_empty() {
+            continue;
+        }
+        let who = match m.role.as_str() {
+            "user" => "User",
+            "assistant" => "Assistant",
+            other => other,
+        };
         transcript.push_str(&format!("## {who}\n\n{}\n\n", m.content));
     }
 
@@ -408,7 +523,8 @@ pub fn conversation_archive(id: i64, db: State<Db>) -> Result<()> {
 
     // Slugify the title for a readable filename, falling back to the
     // conversation id if it's empty/all-punctuation once stripped.
-    let slug: String = conversation.title
+    let slug: String = conversation
+        .title
         .to_lowercase()
         .chars()
         .map(|c| if c.is_alphanumeric() { c } else { '-' })
@@ -417,8 +533,15 @@ pub fn conversation_archive(id: i64, db: State<Db>) -> Result<()> {
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
         .join("-");
-    let slug = if slug.is_empty() { format!("conversation-{id}") } else { slug };
-    let filename = format!("chat-{}-{slug}.md", chrono::Utc::now().format("%Y-%m-%d-%H%M%S"));
+    let slug = if slug.is_empty() {
+        format!("conversation-{id}")
+    } else {
+        slug
+    };
+    let filename = format!(
+        "chat-{}-{slug}.md",
+        chrono::Utc::now().format("%Y-%m-%d-%H%M%S")
+    );
 
     std::fs::write(archives_dir.join(filename), transcript)?;
 
@@ -428,19 +551,26 @@ pub fn conversation_archive(id: i64, db: State<Db>) -> Result<()> {
 #[tauri::command]
 pub fn conversation_get(id: i64, db: State<Db>) -> Result<ConversationWithMessages> {
     let db = db.lock().map_err(|_| AtelierError::internal("lock"))?;
-    let conversation = db.query_row(
-        &format!("SELECT {CONVERSATION_COLUMNS} FROM conversations WHERE id = ?1"),
-        [id], row_to_conversation,
-    ).map_err(|_| AtelierError::not_found("Conversation not found"))?;
+    let conversation = db
+        .query_row(
+            &format!("SELECT {CONVERSATION_COLUMNS} FROM conversations WHERE id = ?1"),
+            [id],
+            row_to_conversation,
+        )
+        .map_err(|_| AtelierError::not_found("Conversation not found"))?;
 
     let mut stmt = db.prepare(
         "SELECT id, conversation_id, role, content, created_at, token_count, input_tokens, output_tokens, error, status, provider, model, display_override
          FROM messages WHERE conversation_id = ?1 ORDER BY created_at ASC"
     )?;
-    let messages: Vec<Message> = stmt.query_map([id], row_to_message)?
+    let messages: Vec<Message> = stmt
+        .query_map([id], row_to_message)?
         .collect::<rusqlite::Result<_>>()?;
 
-    Ok(ConversationWithMessages { conversation, messages })
+    Ok(ConversationWithMessages {
+        conversation,
+        messages,
+    })
 }
 
 /// Creates a new conversation in the same workspace containing a copy of
@@ -456,17 +586,21 @@ pub fn conversation_fork(id: i64, up_to_message_id: i64, db: State<Db>) -> Resul
 }
 
 fn fork_impl(db: &rusqlite::Connection, id: i64, up_to_message_id: i64) -> Result<Conversation> {
-    let (workspace_id, title, provider, model): (i64, String, Option<String>, Option<String>) = db.query_row(
-        "SELECT workspace_id, title, provider, model FROM conversations WHERE id = ?1",
-        [id],
-        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-    ).map_err(|_| AtelierError::not_found("Conversation not found"))?;
+    let (workspace_id, title, provider, model): (i64, String, Option<String>, Option<String>) = db
+        .query_row(
+            "SELECT workspace_id, title, provider, model FROM conversations WHERE id = ?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .map_err(|_| AtelierError::not_found("Conversation not found"))?;
 
-    let cutoff: i64 = db.query_row(
-        "SELECT created_at FROM messages WHERE id = ?1 AND conversation_id = ?2",
-        rusqlite::params![up_to_message_id, id],
-        |r| r.get(0),
-    ).map_err(|_| AtelierError::not_found("Message not found in this conversation"))?;
+    let cutoff: i64 = db
+        .query_row(
+            "SELECT created_at FROM messages WHERE id = ?1 AND conversation_id = ?2",
+            rusqlite::params![up_to_message_id, id],
+            |r| r.get(0),
+        )
+        .map_err(|_| AtelierError::not_found("Message not found in this conversation"))?;
 
     let now = now_ms();
     let fork_title = format!("{title} (fork)");
@@ -485,7 +619,8 @@ fn fork_impl(db: &rusqlite::Connection, id: i64, up_to_message_id: i64) -> Resul
 
     let conv = db.query_row(
         &format!("SELECT {CONVERSATION_COLUMNS} FROM conversations WHERE id = ?1"),
-        [new_id], row_to_conversation,
+        [new_id],
+        row_to_conversation,
     )?;
     Ok(conv)
 }
@@ -509,9 +644,11 @@ pub async fn conversation_compress(
         let mut stmt = db.prepare(
             "SELECT role, content FROM messages WHERE conversation_id = ?1 AND role IN ('user','assistant') AND content != '' ORDER BY created_at ASC"
         )?;
-        let turns: Vec<(String, String)> = stmt.query_map([id], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-        })?.collect::<rusqlite::Result<_>>()?;
+        let turns: Vec<(String, String)> = stmt
+            .query_map([id], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })?
+            .collect::<rusqlite::Result<_>>()?;
         if turns.is_empty() {
             return Err(AtelierError::internal("Nothing to compress yet"));
         }
@@ -520,7 +657,14 @@ pub async fn conversation_compress(
             [id],
             |r| r.get(0),
         ).ok();
-        (turns.iter().map(|(role, content)| format!("{role}: {content}")).collect::<Vec<_>>().join("\n\n"), profile_id)
+        (
+            turns
+                .iter()
+                .map(|(role, content)| format!("{role}: {content}"))
+                .collect::<Vec<_>>()
+                .join("\n\n"),
+            profile_id,
+        )
     };
 
     let prompt = format!(
@@ -534,8 +678,20 @@ pub async fn conversation_compress(
     let mut result = None;
     let mut last_err = None;
     for delay_ms in RETRY_DELAYS_MS {
-        match llm::stream_chat(&app, -1, &provider, &model, vec![("user".to_string(), prompt.clone())], profile_id).await {
-            Ok(r) => { result = Some(r); break; }
+        match llm::stream_chat(
+            &app,
+            -1,
+            &provider,
+            &model,
+            vec![("user".to_string(), prompt.clone())],
+            profile_id,
+        )
+        .await
+        {
+            Ok(r) => {
+                result = Some(r);
+                break;
+            }
             Err(e) => {
                 last_err = Some(e);
                 tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
@@ -544,7 +700,9 @@ pub async fn conversation_compress(
     }
     let memory = match result {
         Some(r) => r.content.trim().to_string(),
-        None => return Err(last_err.unwrap_or_else(|| AtelierError::internal("Compression failed"))),
+        None => {
+            return Err(last_err.unwrap_or_else(|| AtelierError::internal("Compression failed")))
+        }
     };
     if memory.is_empty() {
         return Err(AtelierError::internal("LLM returned an empty memory"));
@@ -565,7 +723,8 @@ pub async fn conversation_compress(
     )?;
     let conv = db.query_row(
         &format!("SELECT {CONVERSATION_COLUMNS} FROM conversations WHERE id = ?1"),
-        [id], row_to_conversation,
+        [id],
+        row_to_conversation,
     )?;
     Ok(conv)
 }
@@ -580,7 +739,16 @@ pub async fn ask(
     db: State<'_, Db>,
     app: AppHandle,
 ) -> Result<Message> {
-    run_turn(conversation_id, content, provider, model, db.inner().clone(), app, None).await
+    run_turn(
+        conversation_id,
+        content,
+        provider,
+        model,
+        db.inner().clone(),
+        app,
+        None,
+    )
+    .await
 }
 
 /// Shared by `ask` (a normal user turn) and plan step execution (see
@@ -603,11 +771,13 @@ pub(crate) async fn run_turn(
     // Check if this is the first user message in this conversation (for auto-title)
     let is_first: bool = {
         let db = db.lock().map_err(|_| AtelierError::internal("lock"))?;
-        let count: i64 = db.query_row(
-            "SELECT COUNT(*) FROM messages WHERE conversation_id = ?1",
-            [conversation_id],
-            |r| r.get(0),
-        ).unwrap_or(1);
+        let count: i64 = db
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE conversation_id = ?1",
+                [conversation_id],
+                |r| r.get(0),
+            )
+            .unwrap_or(1);
         count == 0
     };
 
@@ -661,18 +831,23 @@ pub(crate) async fn run_turn(
                 let mut stmt = db.prepare(
                     "SELECT role, content FROM messages WHERE conversation_id = ?1 AND id != ?2 AND status != 'streaming' AND content != '' AND created_at > ?3 ORDER BY created_at ASC"
                 )?;
-                let rows: Vec<(String, String)> = stmt.query_map(rusqlite::params![conversation_id, assistant_msg_id, compressed_at], |r| {
-                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-                })?.collect::<rusqlite::Result<_>>()?;
+                let rows: Vec<(String, String)> = stmt
+                    .query_map(
+                        rusqlite::params![conversation_id, assistant_msg_id, compressed_at],
+                        |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+                    )?
+                    .collect::<rusqlite::Result<_>>()?;
                 rows
             }
             None => {
                 let mut stmt = db.prepare(
                     "SELECT role, content FROM messages WHERE conversation_id = ?1 AND id != ?2 AND status != 'streaming' AND content != '' ORDER BY created_at ASC"
                 )?;
-                let rows: Vec<(String, String)> = stmt.query_map(rusqlite::params![conversation_id, assistant_msg_id], |r| {
-                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-                })?.collect::<rusqlite::Result<_>>()?;
+                let rows: Vec<(String, String)> = stmt
+                    .query_map(rusqlite::params![conversation_id, assistant_msg_id], |r| {
+                        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                    })?
+                    .collect::<rusqlite::Result<_>>()?;
                 rows
             }
         }
@@ -694,7 +869,8 @@ pub(crate) async fn run_turn(
              WHERE c.id = ?1",
             [conversation_id],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
-        ).ok()
+        )
+        .ok()
     };
 
     // Sub-projects share context in both directions: a child project sees
@@ -709,7 +885,13 @@ pub(crate) async fn run_turn(
 
     // Prepend Atelier's workspace context + skills + LLM Functions protocol
     if let Some((ref workspace_path, ref workspace_name, ref profile_root, _, _)) = ws_context {
-        let mut context = llm::skills::build_context(profile_root, workspace_name, workspace_path, &provider, is_first);
+        let mut context = llm::skills::build_context(
+            profile_root,
+            workspace_name,
+            workspace_path,
+            &provider,
+            is_first,
+        );
         context.push_str(&related_context);
         history.insert(0, ("system".to_string(), context));
     }
@@ -742,7 +924,8 @@ pub(crate) async fn run_turn(
                 &model_clone,
                 current_history.clone(),
                 profile_id_clone,
-            ).await;
+            )
+            .await;
 
             let stream_result = match result {
                 Ok(r) => r,
@@ -754,10 +937,13 @@ pub(crate) async fn run_turn(
                             rusqlite::params![e.message, current_msg_id],
                         );
                     }
-                    let _ = app_clone.emit("chat://error", serde_json::json!({
-                        "message_id": current_msg_id,
-                        "error": e
-                    }));
+                    let _ = app_clone.emit(
+                        "chat://error",
+                        serde_json::json!({
+                            "message_id": current_msg_id,
+                            "error": e
+                        }),
+                    );
                     // The auto-title block further down only runs once a
                     // response actually completes — a conversation whose
                     // very first message errors (bad key, provider outage,
@@ -772,10 +958,13 @@ pub(crate) async fn run_turn(
                                 rusqlite::params![title, conv_id],
                             );
                         }
-                        let _ = app_clone.emit("conversation://titled", serde_json::json!({
-                            "id": conv_id,
-                            "title": title
-                        }));
+                        let _ = app_clone.emit(
+                            "conversation://titled",
+                            serde_json::json!({
+                                "id": conv_id,
+                                "title": title
+                            }),
+                        );
                     }
                     break;
                 }
@@ -831,11 +1020,15 @@ pub(crate) async fn run_turn(
                 // directly rather than routing it through triggers::executor,
                 // which only knows about the workspace filesystem and has no
                 // DB handle.
-                let (plan_triggers, rest): (Vec<_>, Vec<_>) = parse_result.triggers.iter()
+                let (plan_triggers, rest): (Vec<_>, Vec<_>) = parse_result
+                    .triggers
+                    .iter()
                     .cloned()
                     .partition(|t| t.action == "PLAN");
-                const CONNECTOR_ACTIONS: &[&str] = &["GITHUB_READ", "NOTION_READ", "SLACK_READ", "GDRIVE_READ"];
-                let (connector_triggers, file_triggers): (Vec<_>, Vec<_>) = rest.into_iter()
+                const CONNECTOR_ACTIONS: &[&str] =
+                    &["GITHUB_READ", "NOTION_READ", "SLACK_READ", "GDRIVE_READ"];
+                let (connector_triggers, file_triggers): (Vec<_>, Vec<_>) = rest
+                    .into_iter()
                     .partition(|t| CONNECTOR_ACTIONS.contains(&t.action.as_str()));
 
                 for t in &plan_triggers {
@@ -843,18 +1036,34 @@ pub(crate) async fn run_turn(
                         .map(|a| a.iter().any(|x| x == "PLAN"))
                         .unwrap_or(false);
                     if !allowed {
-                        let level_label = llm::permissions::level_label(&perm_level).unwrap_or_default();
+                        let level_label =
+                            llm::permissions::level_label(&perm_level).unwrap_or_default();
                         let detail = format!("Permission denied: {level_label} cannot PLAN");
                         trigger_feedback.push(formatter::format_result("PLAN", "FAIL", &detail));
                         any_trigger_failed = true;
                         continue;
                     }
-                    let title = t.params.first().cloned().unwrap_or_else(|| "Untitled plan".to_string());
-                    let tasks: Vec<String> = t.params.get(1)
-                        .map(|s| s.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
+                    let title = t
+                        .params
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| "Untitled plan".to_string());
+                    let tasks: Vec<String> = t
+                        .params
+                        .get(1)
+                        .map(|s| {
+                            s.lines()
+                                .map(|l| l.trim().to_string())
+                                .filter(|l| !l.is_empty())
+                                .collect()
+                        })
                         .unwrap_or_default();
                     if tasks.is_empty() {
-                        trigger_feedback.push(formatter::format_result("PLAN", "FAIL", "No task lines found in plan content"));
+                        trigger_feedback.push(formatter::format_result(
+                            "PLAN",
+                            "FAIL",
+                            "No task lines found in plan content",
+                        ));
                         any_trigger_failed = true;
                         continue;
                     }
@@ -865,14 +1074,20 @@ pub(crate) async fn run_turn(
                                 created.tasks.len(),
                             );
                             trigger_feedback.push(formatter::format_result(
-                                "PLAN", "OK", &format!("Created plan \"{title}\" with {} steps", created.tasks.len()),
+                                "PLAN",
+                                "OK",
+                                &format!(
+                                    "Created plan \"{title}\" with {} steps",
+                                    created.tasks.len()
+                                ),
                             ));
                             executed_actions.push(("PLAN".to_string(), Some(title.clone())));
                             let _ = app_clone.emit("plan://created", &created);
                         }
                         Err(e) => {
                             log::warn!("Trigger executed (conversation {conv_id}): PLAN FAIL \"{title}\": {}", e.message);
-                            trigger_feedback.push(formatter::format_result("PLAN", "FAIL", &e.message));
+                            trigger_feedback
+                                .push(formatter::format_result("PLAN", "FAIL", &e.message));
                             any_trigger_failed = true;
                         }
                     }
@@ -890,37 +1105,91 @@ pub(crate) async fn run_turn(
                             let path = t.params.get(1).cloned().unwrap_or_default();
                             let target = format!("{owner_repo}/{path}");
                             handle_connector_read_trigger(
-                                "GITHUB_READ", target, "github", "GitHub", &perm_level, conv_id, &app_clone,
-                                profile_id_clone, &mut trigger_feedback, &mut any_trigger_failed, &mut has_content_feedback,
-                                |token| async move { crate::connectors::github::fetch_file(&owner_repo, &path, Some(&token)).await },
-                            ).await;
+                                "GITHUB_READ",
+                                target,
+                                "github",
+                                "GitHub",
+                                &perm_level,
+                                conv_id,
+                                &app_clone,
+                                profile_id_clone,
+                                &mut trigger_feedback,
+                                &mut any_trigger_failed,
+                                &mut has_content_feedback,
+                                |token| async move {
+                                    crate::connectors::github::fetch_file(
+                                        &owner_repo,
+                                        &path,
+                                        Some(&token),
+                                    )
+                                    .await
+                                },
+                            )
+                            .await;
                         }
                         "NOTION_READ" => {
                             let page_id = t.params.first().cloned().unwrap_or_default();
                             let target = page_id.clone();
                             handle_connector_read_trigger(
-                                "NOTION_READ", target, "notion", "Notion", &perm_level, conv_id, &app_clone,
-                                profile_id_clone, &mut trigger_feedback, &mut any_trigger_failed, &mut has_content_feedback,
-                                |token| async move { crate::connectors::notion::fetch_page(&page_id, &token).await },
-                            ).await;
+                                "NOTION_READ",
+                                target,
+                                "notion",
+                                "Notion",
+                                &perm_level,
+                                conv_id,
+                                &app_clone,
+                                profile_id_clone,
+                                &mut trigger_feedback,
+                                &mut any_trigger_failed,
+                                &mut has_content_feedback,
+                                |token| async move {
+                                    crate::connectors::notion::fetch_page(&page_id, &token).await
+                                },
+                            )
+                            .await;
                         }
                         "SLACK_READ" => {
                             let channel_id = t.params.first().cloned().unwrap_or_default();
                             let target = channel_id.clone();
                             handle_connector_read_trigger(
-                                "SLACK_READ", target, "slack", "Slack", &perm_level, conv_id, &app_clone,
-                                profile_id_clone, &mut trigger_feedback, &mut any_trigger_failed, &mut has_content_feedback,
-                                |token| async move { crate::connectors::slack::fetch_channel_history(&channel_id, &token).await },
-                            ).await;
+                                "SLACK_READ",
+                                target,
+                                "slack",
+                                "Slack",
+                                &perm_level,
+                                conv_id,
+                                &app_clone,
+                                profile_id_clone,
+                                &mut trigger_feedback,
+                                &mut any_trigger_failed,
+                                &mut has_content_feedback,
+                                |token| async move {
+                                    crate::connectors::slack::fetch_channel_history(
+                                        &channel_id,
+                                        &token,
+                                    )
+                                    .await
+                                },
+                            )
+                            .await;
                         }
                         "GDRIVE_READ" => {
                             let file_id = t.params.first().cloned().unwrap_or_default();
                             handle_gdrive_read(
-                                &file_id, &perm_level, conv_id, &app_clone, profile_id_clone,
-                                &mut trigger_feedback, &mut any_trigger_failed, &mut has_content_feedback,
-                            ).await;
+                                &file_id,
+                                &perm_level,
+                                conv_id,
+                                &app_clone,
+                                profile_id_clone,
+                                &mut trigger_feedback,
+                                &mut any_trigger_failed,
+                                &mut has_content_feedback,
+                            )
+                            .await;
                         }
-                        _ => unreachable!("CONNECTOR_ACTIONS partition guarantees only these four actions"),
+                        _ => unreachable!(
+                            "CONNECTOR_ACTIONS partition guarantees only these four actions"
+                        ),
                     }
                 }
 
@@ -937,17 +1206,21 @@ pub(crate) async fn run_turn(
                     for tr in &exec_result.results {
                         log::info!(
                             "Trigger executed (conversation {conv_id}): {} {} {:?} - {}",
-                            tr.action, tr.status, tr.file_path, tr.detail,
+                            tr.action,
+                            tr.status,
+                            tr.file_path,
+                            tr.detail,
                         );
-                        trigger_feedback.push(formatter::format_result(
-                            &tr.action, &tr.status, &tr.detail,
-                        ));
+                        trigger_feedback
+                            .push(formatter::format_result(&tr.action, &tr.status, &tr.detail));
                         // WARN is an expected, documented outcome (e.g. CREATE
                         // finding the file already exists) — not a failure,
                         // so it shouldn't fail a plan step or read as an error.
                         if tr.status == "FAIL" {
                             any_trigger_failed = true;
-                        } else if tr.status == "OK" && !matches!(tr.action.as_str(), "LIST" | "READ" | "PREVIEW") {
+                        } else if tr.status == "OK"
+                            && !matches!(tr.action.as_str(), "LIST" | "READ" | "PREVIEW")
+                        {
                             // Only real, completed changes belong in a
                             // synthesized confirmation: WARN (e.g. CREATE
                             // finding the file already exists) didn't actually
@@ -966,19 +1239,24 @@ pub(crate) async fn run_turn(
                     // since otherwise the conversation would just stall until the
                     // user happens to send another message.
                     for cr in &exec_result.content_responses {
-                        trigger_feedback.push(formatter::format_content(
-                            &cr.path, &cr.content,
-                        ));
+                        trigger_feedback.push(formatter::format_content(&cr.path, &cr.content));
                     }
-                    has_content_feedback = has_content_feedback || !exec_result.content_responses.is_empty();
+                    has_content_feedback =
+                        has_content_feedback || !exec_result.content_responses.is_empty();
                 } else {
                     // Triggers were parsed but there's no resolved workspace
                     // path to execute them against — surface this instead of
                     // silently dropping the file operation.
                     for tr in &file_triggers {
-                        let detail = "Cannot resolve workspace path; file operation was not executed".to_string();
-                        log::warn!("Trigger executed (conversation {conv_id}): {} FAIL - {detail}", tr.action);
-                        trigger_feedback.push(formatter::format_result(&tr.action, "FAIL", &detail));
+                        let detail =
+                            "Cannot resolve workspace path; file operation was not executed"
+                                .to_string();
+                        log::warn!(
+                            "Trigger executed (conversation {conv_id}): {} FAIL - {detail}",
+                            tr.action
+                        );
+                        trigger_feedback
+                            .push(formatter::format_result(&tr.action, "FAIL", &detail));
                         any_trigger_failed = true;
                         let result = executor::TriggerResult {
                             action: tr.action.clone(),
@@ -994,12 +1272,12 @@ pub(crate) async fn run_turn(
             // Emit parse errors to frontend
             for err in &parse_result.errors {
                 let _ = app_clone.emit("trigger://error", err);
-                trigger_feedback.push(formatter::format_result(
-                    "UNKNOWN", "FAIL", &err.message,
-                ));
+                trigger_feedback.push(formatter::format_result("UNKNOWN", "FAIL", &err.message));
                 any_trigger_failed = true;
             }
-            if !parse_result.errors.is_empty() && llm::router::is_truncated(&stream_result.finish_reason) {
+            if !parse_result.errors.is_empty()
+                && llm::router::is_truncated(&stream_result.finish_reason)
+            {
                 trigger_feedback.push(
                     "Note: your previous response appears to have been cut off by the model's \
                      output length limit before a trigger could be closed. Try producing shorter \
@@ -1028,12 +1306,17 @@ pub(crate) async fn run_turn(
             // "Created X, edited Y." sentence directly instead of emitting
             // real triggers — which is exactly what defeats the file
             // operations the confirmation claims happened.
-            let display_override = if continue_more || !parse_result.clean_text.trim().is_empty() || executed_actions.is_empty() {
+            let display_override = if continue_more
+                || !parse_result.clean_text.trim().is_empty()
+                || executed_actions.is_empty()
+            {
                 None
             } else {
                 Some(synthesize_confirmation(&executed_actions))
             };
-            let summary_text = display_override.clone().unwrap_or_else(|| parse_result.clean_text.clone());
+            let summary_text = display_override
+                .clone()
+                .unwrap_or_else(|| parse_result.clean_text.clone());
 
             if let Ok(db) = db_clone.lock() {
                 let _ = db.execute(
@@ -1066,22 +1349,32 @@ pub(crate) async fn run_turn(
                         // the next request ("Assistant message must have either
                         // content or tool_calls, but not none"). The raw content
                         // is never empty when the model produced anything at all.
-                        current_history.push(("assistant".to_string(), stream_result.content.clone()));
+                        current_history
+                            .push(("assistant".to_string(), stream_result.content.clone()));
                         current_history.push(("system".to_string(), feedback_content));
                     }
                 }
             }
 
-            let _ = app_clone.emit("chat://done", ChatDone {
-                message_id: current_msg_id,
-                citations: vec![],
-                has_more: continue_more,
-                display_override: display_override.clone(),
-            });
+            let _ = app_clone.emit(
+                "chat://done",
+                ChatDone {
+                    message_id: current_msg_id,
+                    citations: vec![],
+                    has_more: continue_more,
+                    display_override: display_override.clone(),
+                },
+            );
 
             if !continue_more {
                 if let Some(task_id) = plan_task_id {
-                    crate::commands::plan::complete_task(&db_clone, &app_clone, task_id, !any_trigger_failed, &summary_text);
+                    crate::commands::plan::complete_task(
+                        &db_clone,
+                        &app_clone,
+                        task_id,
+                        !any_trigger_failed,
+                        &summary_text,
+                    );
                 }
 
                 // Auto-title on first exchange, once the whole exchange (all
@@ -1110,14 +1403,20 @@ pub(crate) async fn run_turn(
                             &model_clone,
                             vec![("user".to_string(), title_prompt.clone())],
                             profile_id_clone,
-                        ).await {
-                            Ok(r) => { title_result = Some(r); break; }
+                        )
+                        .await
+                        {
+                            Ok(r) => {
+                                title_result = Some(r);
+                                break;
+                            }
                             Err(e) => {
                                 log::warn!(
                                     "Auto-title attempt {} failed for {provider_clone}/{model_clone} (conversation {conv_id}): {} (code: {:?})",
                                     attempt + 1, e.message, e.code,
                                 );
-                                tokio::time::sleep(std::time::Duration::from_millis(*delay_ms)).await;
+                                tokio::time::sleep(std::time::Duration::from_millis(*delay_ms))
+                                    .await;
                             }
                         }
                     }
@@ -1135,10 +1434,13 @@ pub(crate) async fn run_turn(
                                     rusqlite::params![title, conv_id],
                                 );
                             }
-                            let _ = app_clone.emit("conversation://titled", serde_json::json!({
-                                "id": conv_id,
-                                "title": title
-                            }));
+                            let _ = app_clone.emit(
+                                "conversation://titled",
+                                serde_json::json!({
+                                    "id": conv_id,
+                                    "title": title
+                                }),
+                            );
                         }
                     } else {
                         // The LLM call never succeeded (rate limiting, bad
@@ -1157,10 +1459,13 @@ pub(crate) async fn run_turn(
                                 rusqlite::params![title, conv_id],
                             );
                         }
-                        let _ = app_clone.emit("conversation://titled", serde_json::json!({
-                            "id": conv_id,
-                            "title": title
-                        }));
+                        let _ = app_clone.emit(
+                            "conversation://titled",
+                            serde_json::json!({
+                                "id": conv_id,
+                                "title": title
+                            }),
+                        );
                     }
                 }
 
@@ -1178,15 +1483,22 @@ pub(crate) async fn run_turn(
                         db.prepare(
                             "SELECT role, content FROM messages WHERE conversation_id = ?1 \
                              AND role IN ('user','assistant') AND content != '' \
-                             ORDER BY created_at DESC LIMIT 6"
-                        ).and_then(|mut stmt| {
-                            stmt.query_map([conv_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
-                                .collect::<rusqlite::Result<Vec<_>>>()
-                        }).ok()
-                    }).unwrap_or_default()
+                             ORDER BY created_at DESC LIMIT 6",
+                        )
+                        .and_then(|mut stmt| {
+                            stmt.query_map([conv_id], |r| {
+                                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                            })?
+                            .collect::<rusqlite::Result<Vec<_>>>()
+                        })
+                        .ok()
+                    })
+                    .unwrap_or_default()
                 };
                 if recent_turns.len() >= 2 {
-                    let transcript: String = recent_turns.iter().rev()
+                    let transcript: String = recent_turns
+                        .iter()
+                        .rev()
                         .map(|(role, content)| format!("{role}: {content}"))
                         .collect::<Vec<_>>()
                         .join("\n");
@@ -1194,10 +1506,15 @@ pub(crate) async fn run_turn(
                         "Summarize this conversation in one short sentence (under 20 words), for a UI label. Reply with the summary only, no quotes:\n\n{transcript}"
                     );
                     match llm::stream_chat(
-                        &app_clone, -1, &provider_clone, &model_clone,
+                        &app_clone,
+                        -1,
+                        &provider_clone,
+                        &model_clone,
                         vec![("user".to_string(), summary_prompt)],
                         profile_id_clone,
-                    ).await {
+                    )
+                    .await
+                    {
                         Ok(r) => {
                             let summary = r.content.trim().to_string();
                             if !summary.is_empty() {
@@ -1207,10 +1524,13 @@ pub(crate) async fn run_turn(
                                         rusqlite::params![summary, conv_id],
                                     );
                                 }
-                                let _ = app_clone.emit("conversation://summarized", serde_json::json!({
-                                    "id": conv_id,
-                                    "summary": summary
-                                }));
+                                let _ = app_clone.emit(
+                                    "conversation://summarized",
+                                    serde_json::json!({
+                                        "id": conv_id,
+                                        "summary": summary
+                                    }),
+                                );
                             }
                         }
                         Err(e) => {
@@ -1226,13 +1546,20 @@ pub(crate) async fn run_turn(
                 // once one exists — but only while the description is still
                 // empty, so this never overwrites something the user wrote
                 // or edited themselves (see workspace_set_description).
-                if let (Some(ws_id), Some(ref ws_path)) = (workspace_id_clone, &workspace_path_clone) {
-                    let needs_description = db_clone.lock().ok()
-                        .and_then(|db| db.query_row(
-                            "SELECT description FROM workspaces WHERE id = ?1",
-                            [ws_id],
-                            |r| r.get::<_, Option<String>>(0),
-                        ).ok())
+                if let (Some(ws_id), Some(ref ws_path)) =
+                    (workspace_id_clone, &workspace_path_clone)
+                {
+                    let needs_description = db_clone
+                        .lock()
+                        .ok()
+                        .and_then(|db| {
+                            db.query_row(
+                                "SELECT description FROM workspaces WHERE id = ?1",
+                                [ws_id],
+                                |r| r.get::<_, Option<String>>(0),
+                            )
+                            .ok()
+                        })
                         .map(|d| d.map(|s| s.trim().is_empty()).unwrap_or(true))
                         .unwrap_or(false);
 
@@ -1244,10 +1571,15 @@ pub(crate) async fn run_turn(
                                  only, no quotes:\n\n{context_md}"
                             );
                             match llm::stream_chat(
-                                &app_clone, -1, &provider_clone, &model_clone,
+                                &app_clone,
+                                -1,
+                                &provider_clone,
+                                &model_clone,
                                 vec![("user".to_string(), description_prompt)],
                                 profile_id_clone,
-                            ).await {
+                            )
+                            .await
+                            {
                                 Ok(r) => {
                                     let description = r.content.trim().to_string();
                                     if !description.is_empty() {
@@ -1257,10 +1589,13 @@ pub(crate) async fn run_turn(
                                                 rusqlite::params![description, ws_id],
                                             );
                                         }
-                                        let _ = app_clone.emit("workspace://described", serde_json::json!({
-                                            "workspace_id": ws_id,
-                                            "description": description
-                                        }));
+                                        let _ = app_clone.emit(
+                                            "workspace://described",
+                                            serde_json::json!({
+                                                "workspace_id": ws_id,
+                                                "description": description
+                                            }),
+                                        );
                                     }
                                 }
                                 Err(e) => {
@@ -1283,7 +1618,10 @@ pub(crate) async fn run_turn(
             // frontend about it before streaming starts, so its chat://token
             // deltas land somewhere.
             let next_msg_id = {
-                let db = match db_clone.lock() { Ok(d) => d, Err(_) => break };
+                let db = match db_clone.lock() {
+                    Ok(d) => d,
+                    Err(_) => break,
+                };
                 let now = now_ms();
                 let _ = db.execute(
                     "INSERT INTO messages (conversation_id, role, content, created_at, status, provider, model) VALUES (?1, 'assistant', '', ?2, 'streaming', ?3, ?4)",
@@ -1293,7 +1631,10 @@ pub(crate) async fn run_turn(
             };
 
             let next_msg = {
-                let db = match db_clone.lock() { Ok(d) => d, Err(_) => break };
+                let db = match db_clone.lock() {
+                    Ok(d) => d,
+                    Err(_) => break,
+                };
                 match db.query_row(
                     "SELECT id, conversation_id, role, content, created_at, token_count, input_tokens, output_tokens, error, status, provider, model, display_override FROM messages WHERE id = ?1",
                     [next_msg_id], row_to_message,
@@ -1303,7 +1644,10 @@ pub(crate) async fn run_turn(
                 }
             };
 
-            let _ = app_clone.emit("chat://continuation", ChatContinuation { message: next_msg });
+            let _ = app_clone.emit(
+                "chat://continuation",
+                ChatContinuation { message: next_msg },
+            );
             current_msg_id = next_msg_id;
         }
     });
@@ -1325,22 +1669,27 @@ pub fn tool_list(message_id: i64, db: State<Db>) -> Result<Vec<ToolCall>> {
     let mut stmt = db.prepare(
         "SELECT id, message_id, tool_name, arguments_json, status, result_json, created_at FROM tool_calls WHERE message_id = ?1"
     )?;
-    let rows = stmt.query_map([message_id], |row| Ok(ToolCall {
-        id: row.get(0)?,
-        message_id: row.get(1)?,
-        tool_name: row.get(2)?,
-        arguments_json: row.get(3)?,
-        status: row.get(4)?,
-        result_json: row.get(5)?,
-        created_at: row.get(6)?,
-    }))?;
+    let rows = stmt.query_map([message_id], |row| {
+        Ok(ToolCall {
+            id: row.get(0)?,
+            message_id: row.get(1)?,
+            tool_name: row.get(2)?,
+            arguments_json: row.get(3)?,
+            status: row.get(4)?,
+            result_json: row.get(5)?,
+            created_at: row.get(6)?,
+        })
+    })?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
 #[tauri::command]
 pub fn tool_approve(tool_call_id: i64, db: State<Db>) -> Result<ToolCall> {
     let db = db.lock().map_err(|_| AtelierError::internal("lock"))?;
-    db.execute("UPDATE tool_calls SET status = 'approved' WHERE id = ?1", [tool_call_id])?;
+    db.execute(
+        "UPDATE tool_calls SET status = 'approved' WHERE id = ?1",
+        [tool_call_id],
+    )?;
     let tc = db.query_row(
         "SELECT id, message_id, tool_name, arguments_json, status, result_json, created_at FROM tool_calls WHERE id = ?1",
         [tool_call_id],
@@ -1360,7 +1709,10 @@ pub fn tool_approve(tool_call_id: i64, db: State<Db>) -> Result<ToolCall> {
 #[tauri::command]
 pub fn tool_reject(tool_call_id: i64, db: State<Db>) -> Result<ToolCall> {
     let db = db.lock().map_err(|_| AtelierError::internal("lock"))?;
-    db.execute("UPDATE tool_calls SET status = 'rejected' WHERE id = ?1", [tool_call_id])?;
+    db.execute(
+        "UPDATE tool_calls SET status = 'rejected' WHERE id = ?1",
+        [tool_call_id],
+    )?;
     let tc = db.query_row(
         "SELECT id, message_id, tool_name, arguments_json, status, result_json, created_at FROM tool_calls WHERE id = ?1",
         [tool_call_id],
@@ -1378,25 +1730,35 @@ pub fn tool_reject(tool_call_id: i64, db: State<Db>) -> Result<ToolCall> {
 }
 
 #[tauri::command]
-pub fn search_hybrid(workspace_id: i64, query: String, limit: Option<i64>, db: State<Db>) -> Result<Vec<Citation>> {
+pub fn search_hybrid(
+    workspace_id: i64,
+    query: String,
+    limit: Option<i64>,
+    db: State<Db>,
+) -> Result<Vec<Citation>> {
     let limit = limit.unwrap_or(8) as usize;
     let db = db.lock().map_err(|_| AtelierError::internal("lock"))?;
 
     // BM25 full-text results
-    let escaped = query.replace('"', "\"\"").replace('*', "").replace('^', "");
+    let escaped = query.replace('"', "\"\"").replace(['*', '^'], "");
     let fts_query = format!("\"{}\"", escaped);
 
-    let bm25: Vec<(i64, f64)> = db.prepare(
-        "SELECT c.id, -rank as score
+    let bm25: Vec<(i64, f64)> = db
+        .prepare(
+            "SELECT c.id, -rank as score
          FROM chunks_fts
          JOIN chunks c ON chunks_fts.rowid = c.id
          JOIN files f ON c.file_id = f.id
          WHERE f.workspace_id = ?1 AND chunks_fts MATCH ?2
-         ORDER BY rank LIMIT 50"
-    ).and_then(|mut s| {
-        s.query_map(rusqlite::params![workspace_id, fts_query], |r| Ok((r.get(0)?, r.get(1)?)))?
-         .collect::<rusqlite::Result<Vec<_>>>()
-    }).unwrap_or_default();
+         ORDER BY rank LIMIT 50",
+        )
+        .and_then(|mut s| {
+            s.query_map(rusqlite::params![workspace_id, fts_query], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()
+        })
+        .unwrap_or_default();
 
     // Vector results from chunk_embeddings table (cosine similarity approximated by dot product on normalized vectors)
     // We compute this in Rust since sqlite-vec extension may not be loaded.
@@ -1422,10 +1784,17 @@ pub fn search_hybrid(workspace_id: i64, query: String, limit: Option<i64>, db: S
     ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     ranked.truncate(limit);
 
-    if ranked.is_empty() { return Ok(vec![]); }
+    if ranked.is_empty() {
+        return Ok(vec![]);
+    }
 
     let ids: Vec<String> = ranked.iter().map(|(id, _)| id.to_string()).collect();
-    let placeholders = ids.iter().enumerate().map(|(i, _)| format!("?{}", i + 2)).collect::<Vec<_>>().join(",");
+    let placeholders = ids
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format!("?{}", i + 2))
+        .collect::<Vec<_>>()
+        .join(",");
     let sql = format!(
         "SELECT c.id, c.file_id, f.rel_path, c.content, c.page, c.heading
          FROM chunks c JOIN files f ON c.file_id = f.id
@@ -1434,34 +1803,46 @@ pub fn search_hybrid(workspace_id: i64, query: String, limit: Option<i64>, db: S
 
     let mut stmt = db.prepare(&sql).map_err(AtelierError::from)?;
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(workspace_id)];
-    for id in &ranked { params.push(Box::new(id.0)); }
+    for id in &ranked {
+        params.push(Box::new(id.0));
+    }
 
     let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-    let chunk_map: std::collections::HashMap<i64, Citation> = stmt.query_map(param_refs.as_slice(), |row| {
-        let id: i64 = row.get(0)?;
-        Ok((id, Citation {
-            id: 0, message_id: 0,
-            chunk_id: Some(id),
-            file_id: Some(row.get(1)?),
-            rel_path: row.get(2)?,
-            snippet: row.get::<_, String>(3)?.chars().take(300).collect(),
-            page: row.get(4)?,
-            heading: row.get(5)?,
-            rank: 0, score: 0.0,
-        }))
-    }).and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
-    .unwrap_or_default()
-    .into_iter()
-    .map(|(id, c)| (id, c))
-    .collect();
-
-    let result = ranked.iter().enumerate().filter_map(|(i, (chunk_id, score))| {
-        chunk_map.get(chunk_id).map(|c| Citation {
-            rank: i as i64,
-            score: *score,
-            ..c.clone()
+    let chunk_map: std::collections::HashMap<i64, Citation> = stmt
+        .query_map(param_refs.as_slice(), |row| {
+            let id: i64 = row.get(0)?;
+            Ok((
+                id,
+                Citation {
+                    id: 0,
+                    message_id: 0,
+                    chunk_id: Some(id),
+                    file_id: Some(row.get(1)?),
+                    rel_path: row.get(2)?,
+                    snippet: row.get::<_, String>(3)?.chars().take(300).collect(),
+                    page: row.get(4)?,
+                    heading: row.get(5)?,
+                    rank: 0,
+                    score: 0.0,
+                },
+            ))
         })
-    }).collect();
+        .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+
+    let result = ranked
+        .iter()
+        .enumerate()
+        .filter_map(|(i, (chunk_id, score))| {
+            chunk_map.get(chunk_id).map(|c| Citation {
+                rank: i as i64,
+                score: *score,
+                ..c.clone()
+            })
+        })
+        .collect();
 
     Ok(result)
 }
@@ -1480,7 +1861,10 @@ mod tests {
 
     #[test]
     fn fallback_title_takes_the_first_few_words_and_capitalizes() {
-        assert_eq!(fallback_title("how do I center a div in css exactly"), "How do I center a div in css");
+        assert_eq!(
+            fallback_title("how do I center a div in css exactly"),
+            "How do I center a div in css"
+        );
     }
 
     #[test]
@@ -1500,7 +1884,10 @@ mod tests {
     #[test]
     fn synthesize_confirmation_describes_a_single_action() {
         let actions = vec![("CREATE".to_string(), Some("plan.md".to_string()))];
-        assert_eq!(synthesize_confirmation(&actions), "Created [plan.md](<atelier-file:plan.md>).");
+        assert_eq!(
+            synthesize_confirmation(&actions),
+            "Created [plan.md](<atelier-file:plan.md>)."
+        );
     }
 
     #[test]
@@ -1520,7 +1907,10 @@ mod tests {
     fn synthesize_confirmation_wraps_spaced_filenames_in_angle_brackets() {
         // A bare markdown link destination can't contain spaces — real file
         // names very often do (e.g. an office-doc slug with spaces).
-        let actions = vec![("CREATE_DOCX".to_string(), Some("business plan.docx".to_string()))];
+        let actions = vec![(
+            "CREATE_DOCX".to_string(),
+            Some("business plan.docx".to_string()),
+        )];
         assert_eq!(
             synthesize_confirmation(&actions),
             "Created [business plan.docx](<atelier-file:business plan.docx>)."
@@ -1566,7 +1956,10 @@ mod tests {
                 [],
             ).unwrap();
             let raw_content = ">>>[CREATE_DOCX \"report.docx\" \"# Title\"]<<<";
-            let synthesized = synthesize_confirmation(&[("CREATE_DOCX".to_string(), Some("report.docx".to_string()))]);
+            let synthesized = synthesize_confirmation(&[(
+                "CREATE_DOCX".to_string(),
+                Some("report.docx".to_string()),
+            )]);
             conn.execute(
                 "INSERT INTO messages (conversation_id, role, content, created_at, status, display_override) VALUES (1, 'assistant', ?1, 0, 'complete', ?2)",
                 rusqlite::params![raw_content, synthesized],
@@ -1577,11 +1970,13 @@ mod tests {
 
         // The history-rebuilding query (mirrors the one in run_turn) must
         // only ever see the raw content, never the synthesized text.
-        let history_content: String = conn.query_row(
-            "SELECT content FROM messages WHERE role = 'assistant'",
-            [],
-            |r| r.get(0),
-        ).unwrap();
+        let history_content: String = conn
+            .query_row(
+                "SELECT content FROM messages WHERE role = 'assistant'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert!(history_content.contains(">>>[CREATE_DOCX"));
         assert!(!history_content.contains("Created [report.docx]"));
 
@@ -1592,7 +1987,10 @@ mod tests {
             row_to_message,
         ).unwrap();
         assert_eq!(msg.content, history_content);
-        assert_eq!(msg.display_override.as_deref(), Some("Created [report.docx](<atelier-file:report.docx>)."));
+        assert_eq!(
+            msg.display_override.as_deref(),
+            Some("Created [report.docx](<atelier-file:report.docx>).")
+        );
     }
 
     fn temp_workspace_dir() -> std::path::PathBuf {
@@ -1611,7 +2009,11 @@ mod tests {
         ).unwrap();
 
         let parent_dir = temp_workspace_dir();
-        std::fs::write(parent_dir.join("context.md"), "Parent index: manages billing.").unwrap();
+        std::fs::write(
+            parent_dir.join("context.md"),
+            "Parent index: manages billing.",
+        )
+        .unwrap();
         conn.execute(
             "INSERT INTO workspaces (profile_id, name, path, created_at, last_opened_at) VALUES (1, 'Parent', ?1, 0, 0)",
             [parent_dir.to_str().unwrap()],
@@ -1619,7 +2021,11 @@ mod tests {
         let parent_id = conn.last_insert_rowid();
 
         let child_dir = temp_workspace_dir();
-        std::fs::write(child_dir.join("context.md"), "Child index: invoicing module.").unwrap();
+        std::fs::write(
+            child_dir.join("context.md"),
+            "Child index: invoicing module.",
+        )
+        .unwrap();
         conn.execute(
             "INSERT INTO workspaces (profile_id, name, path, created_at, last_opened_at, parent_workspace_id) VALUES (1, 'Child', ?1, 0, 0, ?2)",
             rusqlite::params![child_dir.to_str().unwrap(), parent_id],
@@ -1694,15 +2100,22 @@ mod tests {
             [conv_id],
         ).unwrap();
 
-        let compressed_at: i64 = conn.query_row(
-            "SELECT compressed_at FROM conversations WHERE id = ?1", [conv_id], |r| r.get(0),
-        ).unwrap();
+        let compressed_at: i64 = conn
+            .query_row(
+                "SELECT compressed_at FROM conversations WHERE id = ?1",
+                [conv_id],
+                |r| r.get(0),
+            )
+            .unwrap();
 
         let mut stmt = conn.prepare(
             "SELECT content FROM messages WHERE conversation_id = ?1 AND status != 'streaming' AND content != '' AND created_at > ?2 ORDER BY created_at ASC"
         ).unwrap();
-        let history: Vec<String> = stmt.query_map(rusqlite::params![conv_id, compressed_at], |r| r.get(0)).unwrap()
-            .collect::<rusqlite::Result<_>>().unwrap();
+        let history: Vec<String> = stmt
+            .query_map(rusqlite::params![conv_id, compressed_at], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
 
         assert_eq!(history, vec!["new message".to_string()]);
     }
@@ -1743,16 +2156,25 @@ mod tests {
         assert_eq!(forked.title, "Original (fork)");
         assert_eq!(forked.workspace_id, 1);
 
-        let contents: Vec<String> = conn.prepare(
-            "SELECT content FROM messages WHERE conversation_id = ?1 ORDER BY created_at ASC"
-        ).unwrap().query_map([forked.id], |r| r.get(0)).unwrap()
-            .collect::<rusqlite::Result<_>>().unwrap();
+        let contents: Vec<String> = conn
+            .prepare(
+                "SELECT content FROM messages WHERE conversation_id = ?1 ORDER BY created_at ASC",
+            )
+            .unwrap()
+            .query_map([forked.id], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
         assert_eq!(contents, vec!["hi".to_string(), "hello".to_string()]);
 
         // The original conversation must be untouched.
-        let original_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM messages WHERE conversation_id = ?1", [conv_id], |r| r.get(0),
-        ).unwrap();
+        let original_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE conversation_id = ?1",
+                [conv_id],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(original_count, 3);
     }
 

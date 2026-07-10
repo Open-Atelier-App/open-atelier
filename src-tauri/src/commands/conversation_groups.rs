@@ -2,10 +2,10 @@
 //! subject — see ConversationGroup in models::mod for the shape and
 //! ConversationList.tsx for the drag-and-drop UI that drives these.
 
-use tauri::State;
-use crate::db::{Db, now_ms};
+use crate::db::{now_ms, Db};
 use crate::error::{AtelierError, Result};
 use crate::models::{Conversation, ConversationGroup};
+use tauri::State;
 
 const GROUP_COLUMNS: &str = "id, workspace_id, name, position, created_at";
 
@@ -30,7 +30,11 @@ pub fn conversation_group_list(workspace_id: i64, db: State<Db>) -> Result<Vec<C
 }
 
 #[tauri::command]
-pub fn conversation_group_create(workspace_id: i64, name: String, db: State<Db>) -> Result<ConversationGroup> {
+pub fn conversation_group_create(
+    workspace_id: i64,
+    name: String,
+    db: State<Db>,
+) -> Result<ConversationGroup> {
     let name = name.trim();
     if name.is_empty() {
         return Err(AtelierError::internal("Group name cannot be empty"));
@@ -47,19 +51,34 @@ pub fn conversation_group_create(workspace_id: i64, name: String, db: State<Db>)
         rusqlite::params![workspace_id, name, next_position, now],
     )?;
     let id = db.last_insert_rowid();
-    let group = db.query_row(&format!("SELECT {GROUP_COLUMNS} FROM conversation_groups WHERE id = ?1"), [id], row_to_group)?;
+    let group = db.query_row(
+        &format!("SELECT {GROUP_COLUMNS} FROM conversation_groups WHERE id = ?1"),
+        [id],
+        row_to_group,
+    )?;
     Ok(group)
 }
 
 #[tauri::command]
-pub fn conversation_group_rename(id: i64, name: String, db: State<Db>) -> Result<ConversationGroup> {
+pub fn conversation_group_rename(
+    id: i64,
+    name: String,
+    db: State<Db>,
+) -> Result<ConversationGroup> {
     let name = name.trim();
     if name.is_empty() {
         return Err(AtelierError::internal("Group name cannot be empty"));
     }
     let db = db.lock().map_err(|_| AtelierError::internal("lock"))?;
-    db.execute("UPDATE conversation_groups SET name = ?1 WHERE id = ?2", rusqlite::params![name, id])?;
-    let group = db.query_row(&format!("SELECT {GROUP_COLUMNS} FROM conversation_groups WHERE id = ?1"), [id], row_to_group)?;
+    db.execute(
+        "UPDATE conversation_groups SET name = ?1 WHERE id = ?2",
+        rusqlite::params![name, id],
+    )?;
+    let group = db.query_row(
+        &format!("SELECT {GROUP_COLUMNS} FROM conversation_groups WHERE id = ?1"),
+        [id],
+        row_to_group,
+    )?;
     Ok(group)
 }
 
@@ -78,7 +97,11 @@ pub fn conversation_group_delete(id: i64, db: State<Db>) -> Result<()> {
 /// time. Only touches groups that actually belong to `workspace_id`, so a
 /// stale/tampered id list can't move another workspace's groups.
 #[tauri::command]
-pub fn conversation_group_reorder(workspace_id: i64, ordered_ids: Vec<i64>, db: State<Db>) -> Result<Vec<ConversationGroup>> {
+pub fn conversation_group_reorder(
+    workspace_id: i64,
+    ordered_ids: Vec<i64>,
+    db: State<Db>,
+) -> Result<Vec<ConversationGroup>> {
     let db = db.lock().map_err(|_| AtelierError::internal("lock"))?;
     for (position, id) in ordered_ids.iter().enumerate() {
         db.execute(
@@ -96,7 +119,11 @@ pub fn conversation_group_reorder(workspace_id: i64, ordered_ids: Vec<i64>, db: 
 /// Assigns (or, with `group_id: None`, clears) which folder a conversation
 /// is filed under — the backend half of drag-and-drop in ConversationList.
 #[tauri::command]
-pub fn conversation_set_group(conversation_id: i64, group_id: Option<i64>, db: State<Db>) -> Result<Conversation> {
+pub fn conversation_set_group(
+    conversation_id: i64,
+    group_id: Option<i64>,
+    db: State<Db>,
+) -> Result<Conversation> {
     let db = db.lock().map_err(|_| AtelierError::internal("lock"))?;
     db.execute(
         "UPDATE conversations SET group_id = ?1 WHERE id = ?2",
@@ -167,18 +194,27 @@ mod tests {
         let group = conversation_group_create_impl(&db, ws_id, "Research").unwrap();
         {
             let conn = db.lock().unwrap();
-            conn.execute("UPDATE conversations SET group_id = ?1 WHERE id = ?2", rusqlite::params![group.id, conv_id]).unwrap();
+            conn.execute(
+                "UPDATE conversations SET group_id = ?1 WHERE id = ?2",
+                rusqlite::params![group.id, conv_id],
+            )
+            .unwrap();
         }
 
         {
             let conn = db.lock().unwrap();
-            conn.execute("DELETE FROM conversation_groups WHERE id = ?1", [group.id]).unwrap();
+            conn.execute("DELETE FROM conversation_groups WHERE id = ?1", [group.id])
+                .unwrap();
         }
 
         let conn = db.lock().unwrap();
-        let group_id: Option<i64> = conn.query_row(
-            "SELECT group_id FROM conversations WHERE id = ?1", [conv_id], |r| r.get(0),
-        ).unwrap();
+        let group_id: Option<i64> = conn
+            .query_row(
+                "SELECT group_id FROM conversations WHERE id = ?1",
+                [conv_id],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(group_id, None);
     }
 
@@ -205,17 +241,29 @@ mod tests {
             conn.execute(
                 "UPDATE conversation_groups SET position = ?1 WHERE id = ?2 AND workspace_id = ?3",
                 rusqlite::params![position as i64, id, ws1],
-            ).unwrap();
+            )
+            .unwrap();
         }
-        let other_position: i64 = conn.query_row(
-            "SELECT position FROM conversation_groups WHERE id = ?1", [other.id], |r| r.get(0),
-        ).unwrap();
-        assert_eq!(other_position, 0, "other workspace's group position must be untouched");
+        let other_position: i64 = conn
+            .query_row(
+                "SELECT position FROM conversation_groups WHERE id = ?1",
+                [other.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            other_position, 0,
+            "other workspace's group position must be untouched"
+        );
     }
 
     // Test-only helper mirroring conversation_group_create's logic without
     // needing a Tauri State<Db> wrapper.
-    fn conversation_group_create_impl(db: &Db, workspace_id: i64, name: &str) -> Result<ConversationGroup> {
+    fn conversation_group_create_impl(
+        db: &Db,
+        workspace_id: i64,
+        name: &str,
+    ) -> Result<ConversationGroup> {
         let conn = db.lock().map_err(|_| AtelierError::internal("lock"))?;
         let next_position: i64 = conn.query_row(
             "SELECT COALESCE(MAX(position), -1) + 1 FROM conversation_groups WHERE workspace_id = ?1",
@@ -228,7 +276,11 @@ mod tests {
             rusqlite::params![workspace_id, name, next_position, now],
         )?;
         let id = conn.last_insert_rowid();
-        let group = conn.query_row(&format!("SELECT {GROUP_COLUMNS} FROM conversation_groups WHERE id = ?1"), [id], row_to_group)?;
+        let group = conn.query_row(
+            &format!("SELECT {GROUP_COLUMNS} FROM conversation_groups WHERE id = ?1"),
+            [id],
+            row_to_group,
+        )?;
         Ok(group)
     }
 }

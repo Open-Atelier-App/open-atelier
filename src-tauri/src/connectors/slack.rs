@@ -26,15 +26,21 @@ pub async fn test_connection(token: &str) -> Result<String, String> {
         .await
         .map_err(|e| format!("Could not reach Slack: {e}"))?;
 
-    let body: serde_json::Value = resp.json().await
+    let body: serde_json::Value = resp
+        .json()
+        .await
         .map_err(|e| format!("Unexpected response from Slack: {e}"))?;
 
     if body.get("ok").and_then(|v| v.as_bool()) != Some(true) {
-        let err = body.get("error").and_then(|v| v.as_str()).unwrap_or("unknown error");
+        let err = body
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown error");
         return Err(format!("Slack rejected this token: {err}"));
     }
 
-    body.get("team").and_then(|v| v.as_str())
+    body.get("team")
+        .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .ok_or_else(|| "Slack response had no team name".to_string())
 }
@@ -46,26 +52,39 @@ pub async fn fetch_channel_history(channel_id: &str, token: &str) -> Result<Stri
     let resp = client()
         .get("https://slack.com/api/conversations.history")
         .header("Authorization", format!("Bearer {token}"))
-        .query(&[("channel", channel_id), ("limit", &MAX_MESSAGES.to_string())])
+        .query(&[
+            ("channel", channel_id),
+            ("limit", &MAX_MESSAGES.to_string()),
+        ])
         .send()
         .await
         .map_err(|e| format!("Could not reach Slack: {e}"))?;
 
-    let body: serde_json::Value = resp.json().await
+    let body: serde_json::Value = resp
+        .json()
+        .await
         .map_err(|e| format!("Unexpected response from Slack: {e}"))?;
 
     if body.get("ok").and_then(|v| v.as_bool()) != Some(true) {
-        let err = body.get("error").and_then(|v| v.as_str()).unwrap_or("unknown error");
-        return Err(format!("Slack returned an error for channel {channel_id}: {err}"));
+        let err = body
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown error");
+        return Err(format!(
+            "Slack returned an error for channel {channel_id}: {err}"
+        ));
     }
 
-    let messages = body.get("messages").and_then(|v| v.as_array())
+    let messages = body
+        .get("messages")
+        .and_then(|v| v.as_array())
         .ok_or_else(|| "Slack response had no messages".to_string())?;
     if messages.is_empty() {
         return Err(format!("No messages found in channel {channel_id}"));
     }
 
-    let mut lines: Vec<String> = messages.iter()
+    let mut lines: Vec<String> = messages
+        .iter()
         .filter_map(|m| {
             let user = m.get("user").and_then(|v| v.as_str()).unwrap_or("unknown");
             let text = m.get("text").and_then(|v| v.as_str())?;
@@ -76,7 +95,10 @@ pub async fn fetch_channel_history(channel_id: &str, token: &str) -> Result<Stri
 
     let joined = lines.join("\n");
     if joined.len() > MAX_CONTENT_CHARS {
-        return Err(format!("Channel {channel_id} history is too large to read here ({} chars)", joined.len()));
+        return Err(format!(
+            "Channel {channel_id} history is too large to read here ({} chars)",
+            joined.len()
+        ));
     }
     Ok(joined)
 }

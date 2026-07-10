@@ -27,12 +27,18 @@ pub async fn test_connection(token: &str) -> Result<String, String> {
         .map_err(|e| format!("Could not reach Notion: {e}"))?;
 
     if !resp.status().is_success() {
-        return Err(format!("Notion rejected this token (status {})", resp.status()));
+        return Err(format!(
+            "Notion rejected this token (status {})",
+            resp.status()
+        ));
     }
 
-    let body: serde_json::Value = resp.json().await
+    let body: serde_json::Value = resp
+        .json()
+        .await
         .map_err(|e| format!("Unexpected response from Notion: {e}"))?;
-    body.get("name").and_then(|v| v.as_str())
+    body.get("name")
+        .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .ok_or_else(|| "Notion response had no integration name".to_string())
 }
@@ -53,22 +59,37 @@ pub async fn fetch_page(page_id: &str, token: &str) -> Result<String, String> {
 
     let status = resp.status();
     if status == reqwest::StatusCode::NOT_FOUND {
-        return Err(format!("Page not found, or the integration hasn't been shared onto it: {page_id}"));
+        return Err(format!(
+            "Page not found, or the integration hasn't been shared onto it: {page_id}"
+        ));
     }
     if !status.is_success() {
         return Err(format!("Notion returned {status} for page {page_id}"));
     }
 
-    let body: serde_json::Value = resp.json().await
+    let body: serde_json::Value = resp
+        .json()
+        .await
         .map_err(|e| format!("Unexpected response from Notion: {e}"))?;
-    let results = body.get("results").and_then(|v| v.as_array())
+    let results = body
+        .get("results")
+        .and_then(|v| v.as_array())
         .ok_or_else(|| "Notion response had no results".to_string())?;
 
     let mut lines = Vec::new();
     for block in results {
-        let Some(block_type) = block.get("type").and_then(|v| v.as_str()) else { continue };
-        let Some(rich_text) = block.get(block_type).and_then(|b| b.get("rich_text")).and_then(|v| v.as_array()) else { continue };
-        let text: String = rich_text.iter()
+        let Some(block_type) = block.get("type").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Some(rich_text) = block
+            .get(block_type)
+            .and_then(|b| b.get("rich_text"))
+            .and_then(|v| v.as_array())
+        else {
+            continue;
+        };
+        let text: String = rich_text
+            .iter()
             .filter_map(|rt| rt.get("plain_text").and_then(|v| v.as_str()))
             .collect();
         if !text.is_empty() {
@@ -77,11 +98,16 @@ pub async fn fetch_page(page_id: &str, token: &str) -> Result<String, String> {
     }
 
     if lines.is_empty() {
-        return Err(format!("No readable text blocks found on page {page_id} (nested blocks aren't supported yet)"));
+        return Err(format!(
+            "No readable text blocks found on page {page_id} (nested blocks aren't supported yet)"
+        ));
     }
     let joined = lines.join("\n\n");
     if joined.len() > MAX_CONTENT_CHARS {
-        return Err(format!("Page {page_id} is too large to read here ({} chars)", joined.len()));
+        return Err(format!(
+            "Page {page_id} is too large to read here ({} chars)",
+            joined.len()
+        ));
     }
     Ok(joined)
 }

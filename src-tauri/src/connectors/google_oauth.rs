@@ -65,30 +65,52 @@ fn code_challenge(verifier: &str) -> String {
 /// look broken. Only ever handles a single request — this listener exists
 /// for one sign-in attempt, not as a standing local server.
 async fn capture_redirect(listener: TcpListener, expected_state: &str) -> Result<String, String> {
-    let (mut stream, _) = listener.accept().await.map_err(|e| format!("Redirect listener failed: {e}"))?;
+    let (mut stream, _) = listener
+        .accept()
+        .await
+        .map_err(|e| format!("Redirect listener failed: {e}"))?;
     let mut buf = [0u8; 8192];
-    let n = stream.read(&mut buf).await.map_err(|e| format!("Failed to read redirect: {e}"))?;
+    let n = stream
+        .read(&mut buf)
+        .await
+        .map_err(|e| format!("Failed to read redirect: {e}"))?;
     let request = String::from_utf8_lossy(&buf[..n]);
     let first_line = request.lines().next().unwrap_or("");
     let path = first_line.split_whitespace().nth(1).unwrap_or("");
     let query = path.split_once('?').map(|(_, q)| q).unwrap_or("");
 
     let params: std::collections::HashMap<String, String> =
-        url::form_urlencoded::parse(query.as_bytes()).into_owned().collect();
+        url::form_urlencoded::parse(query.as_bytes())
+            .into_owned()
+            .collect();
 
     let (body, result) = if let Some(err) = params.get("error") {
-        ("Authorization failed — you can close this tab and return to Open Atelier.", Err(format!("Google returned an error: {err}")))
+        (
+            "Authorization failed — you can close this tab and return to Open Atelier.",
+            Err(format!("Google returned an error: {err}")),
+        )
     } else if let Some(code) = params.get("code") {
         if params.get("state").map(String::as_str) != Some(expected_state) {
-            ("Something went wrong — you can close this tab.", Err("State mismatch — possible CSRF, aborting".to_string()))
+            (
+                "Something went wrong — you can close this tab.",
+                Err("State mismatch — possible CSRF, aborting".to_string()),
+            )
         } else {
-            ("Connected — you can close this tab and return to Open Atelier.", Ok(code.clone()))
+            (
+                "Connected — you can close this tab and return to Open Atelier.",
+                Ok(code.clone()),
+            )
         }
     } else {
-        ("Something went wrong — you can close this tab.", Err("No authorization code in redirect".to_string()))
+        (
+            "Something went wrong — you can close this tab.",
+            Err("No authorization code in redirect".to_string()),
+        )
     };
 
-    let html = format!("<html><body style=\"font-family: sans-serif; padding: 2rem;\">{body}</body></html>");
+    let html = format!(
+        "<html><body style=\"font-family: sans-serif; padding: 2rem;\">{body}</body></html>"
+    );
     let response = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{html}",
         html.len(),
@@ -119,13 +141,28 @@ async fn exchange_code(code: &str, verifier: &str, redirect_uri: &str) -> Result
         .map_err(|e| format!("Could not reach Google: {e}"))?;
 
     if !resp.status().is_success() {
-        return Err(format!("Google rejected the code exchange (status {})", resp.status()));
+        return Err(format!(
+            "Google rejected the code exchange (status {})",
+            resp.status()
+        ));
     }
-    let body: serde_json::Value = resp.json().await.map_err(|e| format!("Unexpected response from Google: {e}"))?;
-    let access_token = body.get("access_token").and_then(|v| v.as_str())
-        .ok_or_else(|| "Google response had no access_token".to_string())?.to_string();
-    let refresh_token = body.get("refresh_token").and_then(|v| v.as_str()).map(str::to_string);
-    Ok(Tokens { access_token, refresh_token })
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Unexpected response from Google: {e}"))?;
+    let access_token = body
+        .get("access_token")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Google response had no access_token".to_string())?
+        .to_string();
+    let refresh_token = body
+        .get("refresh_token")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    Ok(Tokens {
+        access_token,
+        refresh_token,
+    })
 }
 
 /// Exchanges a refresh token for a new access token — called on-demand
@@ -144,10 +181,18 @@ pub async fn refresh_access_token(refresh_token: &str) -> Result<String, String>
         .map_err(|e| format!("Could not reach Google: {e}"))?;
 
     if !resp.status().is_success() {
-        return Err(format!("Google rejected the refresh token (status {}) — reconnect Google Drive in Settings", resp.status()));
+        return Err(format!(
+            "Google rejected the refresh token (status {}) — reconnect Google Drive in Settings",
+            resp.status()
+        ));
     }
-    let body: serde_json::Value = resp.json().await.map_err(|e| format!("Unexpected response from Google: {e}"))?;
-    body.get("access_token").and_then(|v| v.as_str()).map(str::to_string)
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Unexpected response from Google: {e}"))?;
+    body.get("access_token")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
         .ok_or_else(|| "Google refresh response had no access_token".to_string())
 }
 
@@ -158,8 +203,15 @@ async fn fetch_email(access_token: &str) -> Result<String, String> {
         .send()
         .await
         .map_err(|e| format!("Could not reach Google: {e}"))?;
-    let body: serde_json::Value = resp.json().await.map_err(|e| format!("Unexpected response from Google: {e}"))?;
-    Ok(body.get("email").and_then(|v| v.as_str()).unwrap_or("your Google account").to_string())
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Unexpected response from Google: {e}"))?;
+    Ok(body
+        .get("email")
+        .and_then(|v| v.as_str())
+        .unwrap_or("your Google account")
+        .to_string())
 }
 
 pub struct ConnectResult {
@@ -175,7 +227,8 @@ pub struct ConnectResult {
 /// commands::connectors::connector_google_drive_oauth_connect) — this
 /// only runs the OAuth dance itself.
 pub async fn connect() -> Result<ConnectResult, String> {
-    let listener = TcpListener::bind("127.0.0.1:0").await
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
         .map_err(|e| format!("Could not start local redirect listener: {e}"))?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     let redirect_uri = format!("http://127.0.0.1:{port}");
@@ -197,7 +250,8 @@ pub async fn connect() -> Result<ConnectResult, String> {
             ("access_type", "offline"),
             ("prompt", "consent"),
         ],
-    ).map_err(|e| format!("Failed to build authorize URL: {e}"))?;
+    )
+    .map_err(|e| format!("Failed to build authorize URL: {e}"))?;
 
     let _ = open::that(auth_url.as_str());
 
@@ -206,9 +260,15 @@ pub async fn connect() -> Result<ConnectResult, String> {
         .map_err(|_| "Timed out waiting for Google sign-in".to_string())??;
 
     let tokens = exchange_code(&code, &verifier, &redirect_uri).await?;
-    let email = fetch_email(&tokens.access_token).await.unwrap_or_else(|_| "your Google account".to_string());
+    let email = fetch_email(&tokens.access_token)
+        .await
+        .unwrap_or_else(|_| "your Google account".to_string());
 
-    Ok(ConnectResult { email, access_token: tokens.access_token, refresh_token: tokens.refresh_token })
+    Ok(ConnectResult {
+        email,
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token,
+    })
 }
 
 #[cfg(test)]
@@ -219,7 +279,9 @@ mod tests {
     fn code_verifier_and_challenge_are_pkce_shaped() {
         let verifier = code_verifier();
         assert!(verifier.len() >= 43 && verifier.len() <= 128);
-        assert!(verifier.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
+        assert!(verifier
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
 
         let challenge = code_challenge(&verifier);
         assert!(!challenge.is_empty());

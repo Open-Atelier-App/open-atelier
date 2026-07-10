@@ -1,7 +1,7 @@
-use tauri::{AppHandle, Emitter, State};
-use crate::db::{Db, now_ms};
+use crate::db::{now_ms, Db};
 use crate::error::{AtelierError, Result};
 use crate::models::{Plan, PlanTask, PlanWithTasks};
+use tauri::{AppHandle, Emitter, State};
 
 fn row_to_plan(row: &rusqlite::Row<'_>) -> rusqlite::Result<Plan> {
     Ok(Plan {
@@ -29,7 +29,7 @@ fn row_to_plan_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<PlanTask> {
 fn fetch_tasks(db: &rusqlite::Connection, plan_id: i64) -> rusqlite::Result<Vec<PlanTask>> {
     let mut stmt = db.prepare(
         "SELECT id, plan_id, seq, description, status, summary, created_at, updated_at
-         FROM plan_tasks WHERE plan_id = ?1 ORDER BY seq ASC"
+         FROM plan_tasks WHERE plan_id = ?1 ORDER BY seq ASC",
     )?;
     let tasks = stmt.query_map([plan_id], row_to_plan_task)?.collect();
     tasks
@@ -41,7 +41,12 @@ fn fetch_tasks(db: &rusqlite::Connection, plan_id: i64) -> rusqlite::Result<Vec<
 /// context, rather than being its own trigger executed through
 /// triggers::executor (that module only knows about the workspace
 /// filesystem, not the SQLite conversation state a plan lives in).
-pub fn create_plan(db: &Db, conversation_id: i64, title: &str, task_descriptions: &[String]) -> Result<PlanWithTasks> {
+pub fn create_plan(
+    db: &Db,
+    conversation_id: i64,
+    title: &str,
+    task_descriptions: &[String],
+) -> Result<PlanWithTasks> {
     let now = now_ms();
     let db = db.lock().map_err(|_| AtelierError::internal("lock"))?;
 
@@ -60,7 +65,8 @@ pub fn create_plan(db: &Db, conversation_id: i64, title: &str, task_descriptions
 
     let plan = db.query_row(
         "SELECT id, conversation_id, title, status, created_at FROM plans WHERE id = ?1",
-        [plan_id], row_to_plan,
+        [plan_id],
+        row_to_plan,
     )?;
     let tasks = fetch_tasks(&db, plan_id)?;
 
@@ -73,7 +79,9 @@ pub fn plan_list(conversation_id: i64, db: State<Db>) -> Result<Vec<PlanWithTask
     let mut stmt = db.prepare(
         "SELECT id, conversation_id, title, status, created_at FROM plans WHERE conversation_id = ?1 ORDER BY created_at ASC"
     )?;
-    let plans: Vec<Plan> = stmt.query_map([conversation_id], row_to_plan)?.collect::<rusqlite::Result<_>>()?;
+    let plans: Vec<Plan> = stmt
+        .query_map([conversation_id], row_to_plan)?
+        .collect::<rusqlite::Result<_>>()?;
 
     let mut result = Vec::with_capacity(plans.len());
     for plan in plans {
@@ -87,7 +95,12 @@ pub fn plan_list(conversation_id: i64, db: State<Db>) -> Result<Vec<PlanWithTask
 /// without a live `AppHandle` (which needs a running Tauri app to
 /// construct). Returns the updated task and its parent plan so the caller
 /// can emit events from them.
-fn complete_task_db(conn: &rusqlite::Connection, task_id: i64, success: bool, summary: &str) -> rusqlite::Result<(PlanTask, Plan)> {
+fn complete_task_db(
+    conn: &rusqlite::Connection,
+    task_id: i64,
+    success: bool,
+    summary: &str,
+) -> rusqlite::Result<(PlanTask, Plan)> {
     let now = now_ms();
 
     let status = if success { "done" } else { "failed" };
@@ -107,15 +120,24 @@ fn complete_task_db(conn: &rusqlite::Connection, task_id: i64, success: bool, su
     } else {
         let remaining: i64 = conn.query_row(
             "SELECT COUNT(*) FROM plan_tasks WHERE plan_id = ?1 AND status != 'done'",
-            [task.plan_id], |r| r.get(0),
+            [task.plan_id],
+            |r| r.get(0),
         )?;
-        if remaining == 0 { "done" } else { "running" }
+        if remaining == 0 {
+            "done"
+        } else {
+            "running"
+        }
     };
-    conn.execute("UPDATE plans SET status = ?1 WHERE id = ?2", rusqlite::params![plan_status, task.plan_id])?;
+    conn.execute(
+        "UPDATE plans SET status = ?1 WHERE id = ?2",
+        rusqlite::params![plan_status, task.plan_id],
+    )?;
 
     let plan = conn.query_row(
         "SELECT id, conversation_id, title, status, created_at FROM plans WHERE id = ?1",
-        [task.plan_id], row_to_plan,
+        [task.plan_id],
+        row_to_plan,
     )?;
 
     Ok((task, plan))
@@ -127,7 +149,9 @@ fn complete_task_db(conn: &rusqlite::Connection, task_id: i64, success: bool, su
 /// auto-continuations) has fully settled.
 pub fn complete_task(db: &Db, app: &AppHandle, task_id: i64, success: bool, summary: &str) {
     let Ok(conn) = db.lock() else { return };
-    let Ok((task, plan)) = complete_task_db(&conn, task_id, success, summary) else { return };
+    let Ok((task, plan)) = complete_task_db(&conn, task_id, success, summary) else {
+        return;
+    };
     drop(conn);
 
     let _ = app.emit("plan://task_updated", &task);
@@ -141,27 +165,40 @@ pub fn complete_task(db: &Db, app: &AppHandle, task_id: i64, success: bool, summ
 /// events emitted by `complete_task` above. Callers decide whether to chain
 /// straight into the next step (auto-run) or wait for the user.
 #[tauri::command]
-pub async fn plan_execute_next(plan_id: i64, db: State<'_, Db>, app: AppHandle) -> Result<Option<PlanTask>> {
+pub async fn plan_execute_next(
+    plan_id: i64,
+    db: State<'_, Db>,
+    app: AppHandle,
+) -> Result<Option<PlanTask>> {
     let db_owned = db.inner().clone();
 
     let (conversation_id, provider, model, next_task, plan_title) = {
         let db = db.lock().map_err(|_| AtelierError::internal("lock"))?;
 
-        let (conversation_id, title): (i64, String) = db.query_row(
-            "SELECT conversation_id, title FROM plans WHERE id = ?1",
-            [plan_id], |r| Ok((r.get(0)?, r.get(1)?)),
-        ).map_err(|_| AtelierError::not_found("Plan not found"))?;
+        let (conversation_id, title): (i64, String) = db
+            .query_row(
+                "SELECT conversation_id, title FROM plans WHERE id = ?1",
+                [plan_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .map_err(|_| AtelierError::not_found("Plan not found"))?;
 
-        let (provider, model): (Option<String>, Option<String>) = db.query_row(
-            "SELECT provider, model FROM conversations WHERE id = ?1",
-            [conversation_id], |r| Ok((r.get(0)?, r.get(1)?)),
-        ).map_err(|_| AtelierError::not_found("Conversation not found"))?;
+        let (provider, model): (Option<String>, Option<String>) = db
+            .query_row(
+                "SELECT provider, model FROM conversations WHERE id = ?1",
+                [conversation_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .map_err(|_| AtelierError::not_found("Conversation not found"))?;
 
-        let next_task = db.query_row(
-            "SELECT id, plan_id, seq, description, status, summary, created_at, updated_at
+        let next_task = db
+            .query_row(
+                "SELECT id, plan_id, seq, description, status, summary, created_at, updated_at
              FROM plan_tasks WHERE plan_id = ?1 AND status = 'pending' ORDER BY seq ASC LIMIT 1",
-            [plan_id], row_to_plan_task,
-        ).ok();
+                [plan_id],
+                row_to_plan_task,
+            )
+            .ok();
 
         (conversation_id, provider, model, next_task, title)
     };
@@ -183,10 +220,20 @@ pub async fn plan_execute_next(plan_id: i64, db: State<'_, Db>, app: AppHandle) 
     let now = now_ms();
     {
         let db = db.lock().map_err(|_| AtelierError::internal("lock"))?;
-        db.execute("UPDATE plan_tasks SET status = 'running', updated_at = ?1 WHERE id = ?2", rusqlite::params![now, task.id])?;
-        db.execute("UPDATE plans SET status = 'running' WHERE id = ?1", rusqlite::params![plan_id])?;
+        db.execute(
+            "UPDATE plan_tasks SET status = 'running', updated_at = ?1 WHERE id = ?2",
+            rusqlite::params![now, task.id],
+        )?;
+        db.execute(
+            "UPDATE plans SET status = 'running' WHERE id = ?1",
+            rusqlite::params![plan_id],
+        )?;
     }
-    let running_task = PlanTask { status: "running".to_string(), updated_at: now, ..task.clone() };
+    let running_task = PlanTask {
+        status: "running".to_string(),
+        updated_at: now,
+        ..task.clone()
+    };
     let _ = app.emit("plan://task_updated", &running_task);
 
     let step_instruction = format!(
@@ -194,7 +241,16 @@ pub async fn plan_execute_next(plan_id: i64, db: State<'_, Db>, app: AppHandle) 
         task.seq + 1, task.description,
     );
 
-    super::chat::run_turn(conversation_id, step_instruction, provider, model, db_owned, app, Some(task.id)).await?;
+    super::chat::run_turn(
+        conversation_id,
+        step_instruction,
+        provider,
+        model,
+        db_owned,
+        app,
+        Some(task.id),
+    )
+    .await?;
 
     Ok(Some(task))
 }
@@ -230,7 +286,11 @@ mod tests {
     #[test]
     fn create_plan_inserts_plan_and_ordered_tasks() {
         let (db, conv_id) = setup_conversation();
-        let tasks = vec!["Step A".to_string(), "Step B".to_string(), "Step C".to_string()];
+        let tasks = vec![
+            "Step A".to_string(),
+            "Step B".to_string(),
+            "Step C".to_string(),
+        ];
         let created = create_plan(&db, conv_id, "My Plan", &tasks).unwrap();
 
         assert_eq!(created.plan.title, "My Plan");
@@ -259,7 +319,13 @@ mod tests {
     #[test]
     fn complete_task_db_keeps_plan_running_with_remaining_tasks() {
         let (db, conv_id) = setup_conversation();
-        let created = create_plan(&db, conv_id, "Plan", &["First".to_string(), "Second".to_string()]).unwrap();
+        let created = create_plan(
+            &db,
+            conv_id,
+            "Plan",
+            &["First".to_string(), "Second".to_string()],
+        )
+        .unwrap();
         let first_id = created.tasks[0].id;
 
         let conn = db.lock().unwrap();
@@ -271,7 +337,13 @@ mod tests {
     #[test]
     fn complete_task_db_marks_plan_failed_on_failure() {
         let (db, conv_id) = setup_conversation();
-        let created = create_plan(&db, conv_id, "Plan", &["First".to_string(), "Second".to_string()]).unwrap();
+        let created = create_plan(
+            &db,
+            conv_id,
+            "Plan",
+            &["First".to_string(), "Second".to_string()],
+        )
+        .unwrap();
         let first_id = created.tasks[0].id;
 
         let conn = db.lock().unwrap();
@@ -284,11 +356,21 @@ mod tests {
     fn plan_list_returns_plans_with_their_tasks() {
         let (db, conv_id) = setup_conversation();
         create_plan(&db, conv_id, "Plan A", &["a1".to_string()]).unwrap();
-        create_plan(&db, conv_id, "Plan B", &["b1".to_string(), "b2".to_string()]).unwrap();
+        create_plan(
+            &db,
+            conv_id,
+            "Plan B",
+            &["b1".to_string(), "b2".to_string()],
+        )
+        .unwrap();
 
         let conn = db.lock().unwrap();
         let mut stmt = conn.prepare("SELECT id, conversation_id, title, status, created_at FROM plans WHERE conversation_id = ?1 ORDER BY created_at ASC").unwrap();
-        let plans: Vec<Plan> = stmt.query_map([conv_id], row_to_plan).unwrap().collect::<rusqlite::Result<_>>().unwrap();
+        let plans: Vec<Plan> = stmt
+            .query_map([conv_id], row_to_plan)
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
         assert_eq!(plans.len(), 2);
         assert_eq!(plans[0].title, "Plan A");
         assert_eq!(plans[1].title, "Plan B");

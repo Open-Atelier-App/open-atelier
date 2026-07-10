@@ -1,8 +1,8 @@
 //! GitHub OAuth Device Flow — the "Connect with GitHub" button in Settings
 //! > Connectors. Device Flow needs no client secret for the token exchange
-//! (unlike the redirect-based "Authorization Code" flow), which is what
-//! makes it safe to ship a bare client ID inside a distributed desktop app:
-//! there's no confidential value here to protect.
+//! > (unlike the redirect-based "Authorization Code" flow), which is what
+//! > makes it safe to ship a bare client ID inside a distributed desktop app:
+//! > there's no confidential value here to protect.
 //!
 //! Flow: `start` requests a device+user code pair and opens the browser to
 //! GitHub's verification page; the user types in the short code shown in
@@ -66,7 +66,10 @@ pub async fn start(scope: &str) -> Result<DeviceFlowStart, String> {
         .map_err(|e| format!("Could not reach GitHub: {e}"))?;
 
     let status = resp.status();
-    let text = resp.text().await.map_err(|e| format!("Could not read GitHub's response: {e}"))?;
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("Could not read GitHub's response: {e}"))?;
 
     let value: serde_json::Value = serde_json::from_str(&text).map_err(|_| {
         format!(
@@ -76,11 +79,16 @@ pub async fn start(scope: &str) -> Result<DeviceFlowStart, String> {
     })?;
 
     if let Some(err) = value.get("error").and_then(|v| v.as_str()) {
-        let desc = value.get("error_description").and_then(|v| v.as_str()).unwrap_or(err);
+        let desc = value
+            .get("error_description")
+            .and_then(|v| v.as_str())
+            .unwrap_or(err);
         return Err(format!("GitHub rejected the device flow request: {desc}"));
     }
     if !status.is_success() {
-        return Err(format!("GitHub rejected the device flow request (status {status})"));
+        return Err(format!(
+            "GitHub rejected the device flow request (status {status})"
+        ));
     }
 
     let body: DeviceCodeResponse = serde_json::from_value(value)
@@ -106,12 +114,18 @@ struct TokenResponse {
 
 /// Polls GitHub at the server-specified interval until the user finishes
 /// entering the code on github.com (or it expires / is denied).
-pub async fn poll(device_code: &str, mut interval_secs: u64, expires_in: u64) -> Result<String, String> {
+pub async fn poll(
+    device_code: &str,
+    mut interval_secs: u64,
+    expires_in: u64,
+) -> Result<String, String> {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(expires_in);
     loop {
         tokio::time::sleep(Duration::from_secs(interval_secs)).await;
         if tokio::time::Instant::now() >= deadline {
-            return Err("Code expired before authorization completed — try connecting again".to_string());
+            return Err(
+                "Code expired before authorization completed — try connecting again".to_string(),
+            );
         }
 
         let resp = client()
@@ -126,7 +140,9 @@ pub async fn poll(device_code: &str, mut interval_secs: u64, expires_in: u64) ->
             .await
             .map_err(|e| format!("Could not reach GitHub: {e}"))?;
 
-        let body: TokenResponse = resp.json().await
+        let body: TokenResponse = resp
+            .json()
+            .await
             .map_err(|e| format!("Unexpected response from GitHub: {e}"))?;
 
         if let Some(token) = body.access_token {
@@ -135,7 +151,12 @@ pub async fn poll(device_code: &str, mut interval_secs: u64, expires_in: u64) ->
         match body.error.as_deref() {
             Some("authorization_pending") => continue,
             Some("slow_down") => interval_secs = body.interval.unwrap_or(interval_secs + 5),
-            Some("expired_token") => return Err("Code expired before authorization completed — try connecting again".to_string()),
+            Some("expired_token") => {
+                return Err(
+                    "Code expired before authorization completed — try connecting again"
+                        .to_string(),
+                )
+            }
             Some("access_denied") => return Err("Authorization was denied".to_string()),
             Some(other) => return Err(format!("GitHub returned an error: {other}")),
             None => return Err("Unexpected response from GitHub".to_string()),
@@ -157,8 +178,10 @@ mod tests {
         match start("repo").await {
             Ok(_) => panic!("expected the placeholder client id to be rejected"),
             Err(e) => assert!(
-                e.contains("GitHub rejected") || e.contains("Could not reach GitHub")
-                    || e.contains("unexpected response") || e.contains("Unexpected response"),
+                e.contains("GitHub rejected")
+                    || e.contains("Could not reach GitHub")
+                    || e.contains("unexpected response")
+                    || e.contains("Unexpected response"),
                 "unexpected error shape: {e}",
             ),
         }
