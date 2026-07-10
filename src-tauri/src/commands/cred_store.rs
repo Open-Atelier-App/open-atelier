@@ -290,7 +290,21 @@ fn local_get(service: &str, account: &str) -> Result<Option<String>> {
     match file.entries.get(&map_key(service, account)) {
         Some(ciphertext) => {
             let key = load_or_create_master_key(&dir)?;
-            Ok(Some(decrypt(&key, ciphertext)?))
+            match decrypt(&key, ciphertext) {
+                Ok(plaintext) => Ok(Some(plaintext)),
+                Err(e) => {
+                    // A ciphertext that won't decrypt/decode can't become
+                    // valid on the next read either — surfacing this forever
+                    // just permanently locks the user out of the provider
+                    // with no way to recover short of finding and deleting
+                    // the file by hand. Drop the bad entry so the next read
+                    // reports "not configured" (same as never having saved
+                    // it), which re-entering the key in Settings fixes.
+                    log::warn!("Dropping unreadable credential {}: {e}", map_key(service, account));
+                    let _ = local_delete(service, account);
+                    Ok(None)
+                }
+            }
         }
         None => Ok(None),
     }
@@ -363,7 +377,20 @@ fn profile_local_get(profile_id: i64, service: &str, account: &str) -> Result<Op
     match file.entries.get(&map_key(service, account)) {
         Some(ciphertext) => {
             let key = load_or_create_master_key(&dir)?;
-            Ok(Some(decrypt(&key, ciphertext)?))
+            match decrypt(&key, ciphertext) {
+                Ok(plaintext) => Ok(Some(plaintext)),
+                Err(e) => {
+                    // Same self-healing as local_get above — an unreadable
+                    // entry would otherwise permanently block this provider
+                    // for this profile.
+                    log::warn!("Dropping unreadable profile credential {}: {e}", map_key(service, account));
+                    let mut file = load_cred_file(&dir)?;
+                    if file.entries.remove(&map_key(service, account)).is_some() {
+                        let _ = save_cred_file(&dir, &file);
+                    }
+                    Ok(None)
+                }
+            }
         }
         None => Ok(None),
     }

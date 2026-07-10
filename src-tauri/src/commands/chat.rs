@@ -1,3 +1,4 @@
+use std::path::Path;
 use tauri::{State, AppHandle, Emitter, Manager};
 use crate::db::{Db, now_ms};
 use crate::error::{AtelierError, Result};
@@ -355,6 +356,75 @@ pub fn conversation_delete(id: i64, db: State<Db>) -> Result<()> {
     Ok(())
 }
 
+/// Deletes a conversation like `conversation_delete`, but first writes its
+/// full transcript to `.archives/chat-<timestamp>.md` inside the project —
+/// archiving a chat means "done with this thread, but keep what it said"
+/// rather than losing it outright.
+#[tauri::command]
+pub fn conversation_archive(id: i64, db: State<Db>) -> Result<()> {
+    let (conversation, messages, ws_path): (Conversation, Vec<Message>, String) = {
+        let db = db.lock().map_err(|_| AtelierError::internal("lock"))?;
+        let conversation = db.query_row(
+            &format!("SELECT {CONVERSATION_COLUMNS} FROM conversations WHERE id = ?1"),
+            [id], row_to_conversation,
+        ).map_err(|_| AtelierError::not_found("Conversation not found"))?;
+
+        let mut stmt = db.prepare(
+            "SELECT id, conversation_id, role, content, created_at, token_count, input_tokens, output_tokens, error, status, provider, model, display_override
+             FROM messages WHERE conversation_id = ?1 ORDER BY created_at ASC"
+        )?;
+        let messages: Vec<Message> = stmt.query_map([id], row_to_message)?
+            .collect::<rusqlite::Result<_>>()?;
+
+        let ws_path: String = db.query_row(
+            "SELECT path FROM workspaces WHERE id = ?1",
+            [conversation.workspace_id],
+            |r| r.get(0),
+        ).map_err(|_| AtelierError::not_found("Workspace not found"))?;
+
+        (conversation, messages, ws_path)
+    };
+
+    let created = chrono::DateTime::from_timestamp_millis(conversation.created_at)
+        .unwrap_or_else(chrono::Utc::now);
+
+    let mut transcript = String::new();
+    transcript.push_str(&format!("# {}\n\n", conversation.title));
+    transcript.push_str(&format!("- **Archived:** {}\n", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")));
+    transcript.push_str(&format!("- **Started:** {}\n", created.format("%Y-%m-%d %H:%M:%S UTC")));
+    if let Some(provider) = &conversation.provider {
+        transcript.push_str(&format!("- **Model:** {provider} / {}\n", conversation.model.as_deref().unwrap_or("?")));
+    }
+    transcript.push_str(&format!("- **Messages:** {}\n\n---\n\n", messages.len()));
+
+    for m in &messages {
+        if m.role == "system" || m.content.trim().is_empty() { continue; }
+        let who = match m.role.as_str() { "user" => "User", "assistant" => "Assistant", other => other };
+        transcript.push_str(&format!("## {who}\n\n{}\n\n", m.content));
+    }
+
+    let archives_dir = Path::new(&ws_path).join(".archives");
+    std::fs::create_dir_all(&archives_dir)?;
+
+    // Slugify the title for a readable filename, falling back to the
+    // conversation id if it's empty/all-punctuation once stripped.
+    let slug: String = conversation.title
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+        .collect::<String>()
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+    let slug = if slug.is_empty() { format!("conversation-{id}") } else { slug };
+    let filename = format!("chat-{}-{slug}.md", chrono::Utc::now().format("%Y-%m-%d-%H%M%S"));
+
+    std::fs::write(archives_dir.join(filename), transcript)?;
+
+    conversation_delete(id, db)
+}
+
 #[tauri::command]
 pub fn conversation_get(id: i64, db: State<Db>) -> Result<ConversationWithMessages> {
     let db = db.lock().map_err(|_| AtelierError::internal("lock"))?;
@@ -434,7 +504,7 @@ pub async fn conversation_compress(
     app: AppHandle,
     db: State<'_, Db>,
 ) -> Result<Conversation> {
-    let transcript: String = {
+    let (transcript, profile_id): (String, Option<i64>) = {
         let db = db.lock().map_err(|_| AtelierError::internal("lock"))?;
         let mut stmt = db.prepare(
             "SELECT role, content FROM messages WHERE conversation_id = ?1 AND role IN ('user','assistant') AND content != '' ORDER BY created_at ASC"
@@ -445,7 +515,12 @@ pub async fn conversation_compress(
         if turns.is_empty() {
             return Err(AtelierError::internal("Nothing to compress yet"));
         }
-        turns.iter().map(|(role, content)| format!("{role}: {content}")).collect::<Vec<_>>().join("\n\n")
+        let profile_id: Option<i64> = db.query_row(
+            "SELECT p.id FROM conversations c JOIN workspaces w ON w.id = c.workspace_id JOIN profiles p ON p.id = w.profile_id WHERE c.id = ?1",
+            [id],
+            |r| r.get(0),
+        ).ok();
+        (turns.iter().map(|(role, content)| format!("{role}: {content}")).collect::<Vec<_>>().join("\n\n"), profile_id)
     };
 
     let prompt = format!(
@@ -459,7 +534,7 @@ pub async fn conversation_compress(
     let mut result = None;
     let mut last_err = None;
     for delay_ms in RETRY_DELAYS_MS {
-        match llm::stream_chat(&app, -1, &provider, &model, vec![("user".to_string(), prompt.clone())]).await {
+        match llm::stream_chat(&app, -1, &provider, &model, vec![("user".to_string(), prompt.clone())], profile_id).await {
             Ok(r) => { result = Some(r); break; }
             Err(e) => {
                 last_err = Some(e);
@@ -666,6 +741,7 @@ pub(crate) async fn run_turn(
                 &provider_clone,
                 &model_clone,
                 current_history.clone(),
+                profile_id_clone,
             ).await;
 
             let stream_result = match result {
@@ -682,6 +758,25 @@ pub(crate) async fn run_turn(
                         "message_id": current_msg_id,
                         "error": e
                     }));
+                    // The auto-title block further down only runs once a
+                    // response actually completes — a conversation whose
+                    // very first message errors (bad key, provider outage,
+                    // rate limit) would otherwise be stuck on "New
+                    // conversation" forever, with no later message ever
+                    // getting a chance to retry titling it.
+                    if is_first {
+                        let title = fallback_title(&content_clone);
+                        if let Ok(db) = db_clone.lock() {
+                            let _ = db.execute(
+                                "UPDATE conversations SET title = ?1 WHERE id = ?2",
+                                rusqlite::params![title, conv_id],
+                            );
+                        }
+                        let _ = app_clone.emit("conversation://titled", serde_json::json!({
+                            "id": conv_id,
+                            "title": title
+                        }));
+                    }
                     break;
                 }
             };
@@ -1014,6 +1109,7 @@ pub(crate) async fn run_turn(
                             &provider_clone,
                             &model_clone,
                             vec![("user".to_string(), title_prompt.clone())],
+                            profile_id_clone,
                         ).await {
                             Ok(r) => { title_result = Some(r); break; }
                             Err(e) => {
@@ -1100,6 +1196,7 @@ pub(crate) async fn run_turn(
                     match llm::stream_chat(
                         &app_clone, -1, &provider_clone, &model_clone,
                         vec![("user".to_string(), summary_prompt)],
+                        profile_id_clone,
                     ).await {
                         Ok(r) => {
                             let summary = r.content.trim().to_string();
@@ -1149,6 +1246,7 @@ pub(crate) async fn run_turn(
                             match llm::stream_chat(
                                 &app_clone, -1, &provider_clone, &model_clone,
                                 vec![("user".to_string(), description_prompt)],
+                                profile_id_clone,
                             ).await {
                                 Ok(r) => {
                                     let description = r.content.trim().to_string();

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, memo } from 'react';
 import { Copy, Check } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -12,12 +12,16 @@ import { SettingsView } from './components/settings/SettingsView';
 import { ProfileSetup } from './components/onboarding/ProfileSetup';
 import { IndexProgressBar } from './components/workspace/IndexProgressBar';
 import { SearchOverlay } from './components/search/SearchOverlay';
+import { QuickChatModal } from './components/chat/QuickChatModal';
 import { useUIStore } from './stores/uiStore';
 import { useProfileStore } from './stores/profileStore';
 import { useWorkspaceStore } from './stores/workspaceStore';
+import { useChatStore } from './stores/chatStore';
 import { useTauriEvents } from './hooks/useTauriEvents';
+import { ResizeHandle } from './components/layout/ResizeHandle';
 import * as api from './lib/tauri';
 import type { OfficePreview } from './lib/types';
+import { checkForUpdates } from './lib/updater';
 
 export default function App() {
   const sidebarOpen = useUIStore(s => s.sidebarOpen);
@@ -31,8 +35,10 @@ export default function App() {
   const closeFileViewer = useUIStore(s => s.closeFileViewer);
   const toggleFileViewer = useUIStore(s => s.toggleFileViewer);
   const triggerNewChat = useUIStore(s => s.triggerNewChat);
+  const closeConversation = useChatStore(s => s.closeConversation);
   const searchOpen = useUIStore(s => s.searchOpen);
   const setSearchOpen = useUIStore(s => s.setSearchOpen);
+  const setQuickChatOpen = useUIStore(s => s.setQuickChatOpen);
   const loadProfiles = useProfileStore(s => s.load);
   const profiles = useProfileStore(s => s.profiles);
   const profilesLoading = useProfileStore(s => s.loading);
@@ -50,6 +56,18 @@ export default function App() {
   useEffect(() => {
     loadProfiles();
   }, [loadProfiles]);
+
+  // Same check the Settings > About "Check for updates" button runs,
+  // just triggered automatically once shortly after launch instead of on
+  // click — a delay so it doesn't compete with initial data loading, and
+  // silently ignored on failure (e.g. offline) since there's no dedicated
+  // UI here to report it to, unlike the Settings button.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      checkForUpdates().catch(() => {});
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, []);
 
 
   useEffect(() => {
@@ -84,18 +102,29 @@ export default function App() {
       if (searchOpen) { setSearchOpen(false); return; }
       if (showSettings) { setShowSettings(false); return; }
       if (fileViewerOpen) { closeFileViewer(); return; }
+      if (useUIStore.getState().quickChatOpen) { setQuickChatOpen(false); return; }
       return;
     }
     if (!meta) return;
+    if (e.shiftKey && e.key.toLowerCase() === 'n') {
+      e.preventDefault();
+      setQuickChatOpen(true);
+      return;
+    }
     switch (e.key) {
       case '[': e.preventDefault(); toggleSidebar(); break;
       case ']': e.preventDefault(); toggleRightBar(); break;
       case '\\': e.preventDefault(); toggleFileViewer(); break;
       case ',': e.preventDefault(); setShowSettings(true); break;
-      case 'n': e.preventDefault(); triggerNewChat(); break;
+      // Closing the active conversation drops back to the current
+      // project's composer/list view — the same thing clicking the
+      // sidebar's back arrow or "+" does. `triggerNewChat` alone used to
+      // only refocus whatever ChatInput was already on screen, which did
+      // nothing observable while a conversation was open.
+      case 'n': e.preventDefault(); closeConversation(); triggerNewChat(); break;
       case 'k': e.preventDefault(); setSearchOpen(!searchOpen); break;
     }
-  }, [toggleSidebar, toggleRightBar, closeFileViewer, toggleFileViewer, setShowSettings, triggerNewChat, searchOpen, setSearchOpen, showSettings, fileViewerOpen]);
+  }, [toggleSidebar, toggleRightBar, closeFileViewer, toggleFileViewer, setShowSettings, triggerNewChat, closeConversation, searchOpen, setSearchOpen, showSettings, fileViewerOpen, setQuickChatOpen]);
 
   useEffect(() => {
     window.addEventListener('keydown', handleKeyDown);
@@ -126,6 +155,7 @@ export default function App() {
       </div>
       <IndexProgressBar />
       <SearchOverlay />
+      <QuickChatModal />
       {showSettings && <SettingsView onClose={() => setShowSettings(false)} />}
       {showProfileSetup && (
         <ProfileSetup onDone={() => { setProfileSetupDismissed(true); setForceProfileSetup(false); }} />
@@ -250,6 +280,104 @@ function CopyButton({ text, title }: { text: string; title?: string }) {
   );
 }
 
+// Memoized so it only re-parses the markdown when the file's own content
+// actually changes — without this, every re-render of FileViewerPanel (a
+// resize drag updating fileViewerWidth, toggling the office preview's
+// active sheet, hovering a button) re-ran a full ReactMarkdown parse of
+// this same string, which visibly stalls the UI on a large document.
+const FileMarkdownBody = memo(function FileMarkdownBody({
+  markdownBody, path, workspacePath,
+}: {
+  markdownBody: string;
+  path: string;
+  workspacePath: string;
+}) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        h1: ({ children }) => <h1 style={{ fontSize: 22, fontWeight: 700, margin: '20px 0 10px', borderBottom: '1px solid var(--border)', paddingBottom: 6, color: 'var(--text-primary)' }}>{children}</h1>,
+        h2: ({ children }) => <h2 style={{ fontSize: 19, fontWeight: 700, margin: '18px 0 8px', borderBottom: '1px solid var(--border)', paddingBottom: 4, color: 'var(--text-primary)' }}>{children}</h2>,
+        h3: ({ children }) => <h3 style={{ fontSize: 16, fontWeight: 600, margin: '16px 0 6px', color: 'var(--text-primary)' }}>{children}</h3>,
+        h4: ({ children }) => <h4 style={{ fontSize: 14, fontWeight: 600, margin: '14px 0 6px', color: 'var(--text-primary)' }}>{children}</h4>,
+        h5: ({ children }) => <h5 style={{ fontSize: 13, fontWeight: 600, margin: '12px 0 4px', color: 'var(--text-muted)' }}>{children}</h5>,
+        h6: ({ children }) => <h6 style={{ fontSize: 12, fontWeight: 600, margin: '10px 0 4px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{children}</h6>,
+        p: ({ children }) => <p style={{ margin: '0 0 12px' }}>{children}</p>,
+        blockquote: ({ children }) => (
+          <blockquote style={{
+            margin: '0 0 12px', padding: '4px 12px',
+            borderLeft: '3px solid var(--accent)', color: 'var(--text-muted)',
+            background: 'var(--overlay)', borderRadius: '0 4px 4px 0',
+          }}>
+            {children}
+          </blockquote>
+        ),
+        ul: ({ children }) => <ul style={{ margin: '0 0 12px', paddingLeft: 22 }}>{children}</ul>,
+        ol: ({ children }) => <ol style={{ margin: '0 0 12px', paddingLeft: 22 }}>{children}</ol>,
+        li: ({ children }) => <li style={{ marginBottom: 4 }}>{children}</li>,
+        hr: () => <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: '20px 0' }} />,
+        a: ({ children, href }) => (
+          <a
+            href={href}
+            onClick={(e) => {
+              e.preventDefault();
+              if (href) openShell(href).catch((err: unknown) => console.error('Failed to open link', err));
+            }}
+            style={{ color: 'var(--accent)', cursor: 'pointer', textDecoration: 'underline' }}
+          >
+            {children}
+          </a>
+        ),
+        img: ({ src, alt }) => (
+          <MarkdownImage src={src} alt={alt} basePath={path} workspacePath={workspacePath} />
+        ),
+        table: ({ children }) => (
+          <div style={{ overflow: 'auto', marginBottom: 12 }}>
+            <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 12 }}>
+              {children}
+            </table>
+          </div>
+        ),
+        thead: ({ children }) => <thead style={{ background: 'var(--overlay)' }}>{children}</thead>,
+        th: ({ children }) => (
+          <th style={{ border: '1px solid var(--border)', padding: '6px 10px', textAlign: 'left', fontWeight: 600, color: 'var(--text-primary)' }}>
+            {children}
+          </th>
+        ),
+        td: ({ children }) => (
+          <td style={{ border: '1px solid var(--border)', padding: '6px 10px', color: 'var(--text-primary)' }}>
+            {children}
+          </td>
+        ),
+        code({ children, className }) {
+          const isBlock = className?.startsWith('language-');
+          if (isBlock) {
+            return (
+              <pre style={{
+                background: 'var(--bg-app)', border: '1px solid var(--border)',
+                borderRadius: 4, padding: '10px 12px', overflow: 'auto',
+                fontFamily: 'JetBrains Mono, monospace', fontSize: 12,
+              }}>
+                <code>{children}</code>
+              </pre>
+            );
+          }
+          return (
+            <code style={{
+              fontFamily: 'JetBrains Mono, monospace', fontSize: 12,
+              background: 'var(--overlay)', padding: '1px 4px', borderRadius: 3,
+            }}>
+              {children}
+            </code>
+          );
+        },
+      }}
+    >
+      {markdownBody}
+    </ReactMarkdown>
+  );
+});
+
 function FileViewerPanel({
   path, workspaceId, workspacePath, onClose,
 }: {
@@ -266,6 +394,9 @@ function FileViewerPanel({
   const [exportingPdf, setExportingPdf] = useState(false);
   const openFileViewer = useUIStore(s => s.openFileViewer);
   const loadFileTree = useWorkspaceStore(s => s.loadFileTree);
+  const fileViewerWidth = useUIStore(s => s.fileViewerWidth);
+  const resizeFileViewer = useUIStore(s => s.resizeFileViewer);
+  const refreshKey = useUIStore(s => s.fileViewerRefreshKey);
 
   const lowerPath = path.toLowerCase();
   const isHtml = lowerPath.endsWith('.html') || lowerPath.endsWith('.htm');
@@ -298,14 +429,16 @@ function FileViewerPanel({
     api.fileReadRaw(workspaceId, path)
       .then(setContent)
       .catch((e: unknown) => setError(api.errorMessage(e)));
-  }, [path, workspaceId, skipsRawRead]);
+    // refreshKey isn't read in the body — it only exists to force a refetch
+    // when a trigger just wrote to this same file (see useTauriEvents).
+  }, [path, workspaceId, skipsRawRead, refreshKey]);
 
   useEffect(() => {
     if (!isOfficePreviewable) return;
     api.fileReadOfficePreview(workspaceId, path)
       .then(setOfficePreview)
       .catch((e: unknown) => setOfficeError(api.errorMessage(e)));
-  }, [path, workspaceId, isOfficePreviewable]);
+  }, [path, workspaceId, isOfficePreviewable, refreshKey]);
 
   // Direct "Export to PDF" button for HTML files — same html_to_pdf
   // renderer as the EXPORT_PDF trigger, just invoked straight from the UI
@@ -347,11 +480,17 @@ function FileViewerPanel({
   const hasFrontmatter = Object.keys(frontmatter).length > 0;
 
   return (
+    <div style={{ display: 'flex', flexShrink: 0 }}>
+    <ResizeHandle onDrag={delta => resizeFileViewer(-delta)} />
     <div style={{
-      position: 'absolute', top: 0, right: 0, bottom: 0,
-      width: 480, background: 'var(--bg-surface)',
+      // A flex sibling (not an absolutely-positioned overlay) so the chat
+      // column actually shrinks to make room for it, instead of this
+      // panel floating on top and covering whatever's underneath — e.g.
+      // the chat input's right edge.
+      flexShrink: 0,
+      width: fileViewerWidth, background: 'var(--bg-surface)',
       borderLeft: '1px solid var(--border)',
-      zIndex: 50, display: 'flex', flexDirection: 'column',
+      display: 'flex', flexDirection: 'column',
     }}>
       <div style={{
         padding: '0 16px', height: 48, borderBottom: '1px solid var(--border)',
@@ -517,91 +656,11 @@ function FileViewerPanel({
                 )}
               </div>
             )}
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={{
-                h1: ({ children }) => <h1 style={{ fontSize: 22, fontWeight: 700, margin: '20px 0 10px', borderBottom: '1px solid var(--border)', paddingBottom: 6, color: 'var(--text-primary)' }}>{children}</h1>,
-                h2: ({ children }) => <h2 style={{ fontSize: 19, fontWeight: 700, margin: '18px 0 8px', borderBottom: '1px solid var(--border)', paddingBottom: 4, color: 'var(--text-primary)' }}>{children}</h2>,
-                h3: ({ children }) => <h3 style={{ fontSize: 16, fontWeight: 600, margin: '16px 0 6px', color: 'var(--text-primary)' }}>{children}</h3>,
-                h4: ({ children }) => <h4 style={{ fontSize: 14, fontWeight: 600, margin: '14px 0 6px', color: 'var(--text-primary)' }}>{children}</h4>,
-                h5: ({ children }) => <h5 style={{ fontSize: 13, fontWeight: 600, margin: '12px 0 4px', color: 'var(--text-muted)' }}>{children}</h5>,
-                h6: ({ children }) => <h6 style={{ fontSize: 12, fontWeight: 600, margin: '10px 0 4px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{children}</h6>,
-                p: ({ children }) => <p style={{ margin: '0 0 12px' }}>{children}</p>,
-                blockquote: ({ children }) => (
-                  <blockquote style={{
-                    margin: '0 0 12px', padding: '4px 12px',
-                    borderLeft: '3px solid var(--accent)', color: 'var(--text-muted)',
-                    background: 'var(--overlay)', borderRadius: '0 4px 4px 0',
-                  }}>
-                    {children}
-                  </blockquote>
-                ),
-                ul: ({ children }) => <ul style={{ margin: '0 0 12px', paddingLeft: 22 }}>{children}</ul>,
-                ol: ({ children }) => <ol style={{ margin: '0 0 12px', paddingLeft: 22 }}>{children}</ol>,
-                li: ({ children }) => <li style={{ marginBottom: 4 }}>{children}</li>,
-                hr: () => <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: '20px 0' }} />,
-                a: ({ children, href }) => (
-                  <a
-                    href={href}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      if (href) openShell(href).catch((err: unknown) => console.error('Failed to open link', err));
-                    }}
-                    style={{ color: 'var(--accent)', cursor: 'pointer', textDecoration: 'underline' }}
-                  >
-                    {children}
-                  </a>
-                ),
-                img: ({ src, alt }) => (
-                  <MarkdownImage src={src} alt={alt} basePath={path} workspacePath={workspacePath} />
-                ),
-                table: ({ children }) => (
-                  <div style={{ overflow: 'auto', marginBottom: 12 }}>
-                    <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 12 }}>
-                      {children}
-                    </table>
-                  </div>
-                ),
-                thead: ({ children }) => <thead style={{ background: 'var(--overlay)' }}>{children}</thead>,
-                th: ({ children }) => (
-                  <th style={{ border: '1px solid var(--border)', padding: '6px 10px', textAlign: 'left', fontWeight: 600, color: 'var(--text-primary)' }}>
-                    {children}
-                  </th>
-                ),
-                td: ({ children }) => (
-                  <td style={{ border: '1px solid var(--border)', padding: '6px 10px', color: 'var(--text-primary)' }}>
-                    {children}
-                  </td>
-                ),
-                code({ children, className }) {
-                  const isBlock = className?.startsWith('language-');
-                  if (isBlock) {
-                    return (
-                      <pre style={{
-                        background: 'var(--bg-app)', border: '1px solid var(--border)',
-                        borderRadius: 4, padding: '10px 12px', overflow: 'auto',
-                        fontFamily: 'JetBrains Mono, monospace', fontSize: 12,
-                      }}>
-                        <code>{children}</code>
-                      </pre>
-                    );
-                  }
-                  return (
-                    <code style={{
-                      fontFamily: 'JetBrains Mono, monospace', fontSize: 12,
-                      background: 'var(--overlay)', padding: '1px 4px', borderRadius: 3,
-                    }}>
-                      {children}
-                    </code>
-                  );
-                },
-              }}
-            >
-              {markdownBody}
-            </ReactMarkdown>
+            <FileMarkdownBody markdownBody={markdownBody} path={path} workspacePath={workspacePath} />
           </div>
         )}
       </div>
+    </div>
     </div>
   );
 }

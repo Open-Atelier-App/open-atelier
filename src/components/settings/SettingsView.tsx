@@ -9,6 +9,7 @@ import { useWorkspaceStore } from '../../stores/workspaceStore';
 import { useProfileStore } from '../../stores/profileStore';
 import type { SkillInfo } from '../../lib/tauri';
 import { GithubConnectButton, GoogleDriveConnectButton } from './OAuthConnectButtons';
+import { checkForUpdates } from '../../lib/updater';
 
 interface Props {
   onClose: () => void;
@@ -613,7 +614,13 @@ function ConnectProviderForm({ profileId, excludeProviders, onDone, onCancel }: 
         await api.keySave(selectedProvider, apiKey.trim());
       }
       if (label.trim()) {
-        const labels = await api.settingsGet('provider_labels').catch(() => ({})) as Record<string, string>;
+        // settingsGet resolves to null (not a rejection) when the setting
+        // has never been saved before — e.g. the very first LLM ever
+        // connected in a profile — so `?? {}` is needed in addition to the
+        // `.catch()` fallback, or `labels` stays null and the assignment
+        // below throws.
+        const existing = await api.settingsGet('provider_labels').catch(() => null) as Record<string, string> | null;
+        const labels = existing ?? {};
         labels[selectedProvider] = label.trim();
         await api.settingsSet('provider_labels', labels);
       }
@@ -1347,34 +1354,33 @@ function AboutTab() {
   const [resetConfirmText, setResetConfirmText] = useState('');
   const [updateStatus, setUpdateStatus] = useState<'idle' | 'checking' | 'available' | 'downloading' | 'up-to-date' | 'error'>('idle');
   const [updateError, setUpdateError] = useState('');
+  const [appVersion, setAppVersion] = useState('');
+
+  useEffect(() => {
+    import('@tauri-apps/api/app').then(({ getVersion }) => getVersion()).then(setAppVersion).catch(() => {});
+  }, []);
 
   const handleCheckUpdates = async () => {
-    setUpdateStatus('checking');
     setUpdateError('');
-    try {
-      const { check } = await import('@tauri-apps/plugin-updater');
-      const update = await check();
-      if (update) {
-        setUpdateStatus('available');
-        if (await confirmDialog(`Version ${update.version} is available.`, { title: 'Download and install?' })) {
-          setUpdateStatus('downloading');
-          await update.downloadAndInstall();
-          const { relaunch } = await import('@tauri-apps/plugin-process');
-          await relaunch();
-        } else {
-          setUpdateStatus('idle');
-        }
-      } else {
+    const result = await checkForUpdates(setUpdateStatus);
+    switch (result.status) {
+      case 'up-to-date':
         setUpdateStatus('up-to-date');
-      }
-    } catch (e) {
-      setUpdateStatus('error');
-      const msg = api.errorMessage(e);
-      if (msg.includes('release JSON') || msg.includes('endpoint') || msg.includes('pubkey')) {
-        setUpdateError('Auto-update is not available yet. Check open-atelier.app/update for the latest release.');
-      } else {
-        setUpdateError(msg);
-      }
+        break;
+      case 'declined':
+        setUpdateStatus('idle');
+        break;
+      case 'installed':
+        // App relaunches itself momentarily; leave the status as-is.
+        break;
+      case 'error':
+        setUpdateStatus('error');
+        if (result.message.includes('release JSON') || result.message.includes('endpoint') || result.message.includes('pubkey')) {
+          setUpdateError('Auto-update is not available yet. Check open-atelier.app/update for the latest release.');
+        } else {
+          setUpdateError(result.message);
+        }
+        break;
     }
   };
 
@@ -1393,7 +1399,7 @@ function AboutTab() {
         Open Atelier
       </div>
       <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>
-        Version 0.2.0
+        Version {appVersion || '…'}
       </div>
       <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 12 }}>
         &copy; 2025 Atelier. All rights reserved.

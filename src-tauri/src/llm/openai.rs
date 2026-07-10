@@ -2,7 +2,7 @@ use futures_util::StreamExt;
 use tauri::AppHandle;
 use crate::error::{AtelierError, ErrorCode, Result};
 use super::router::{emit_token, StreamResult};
-use super::sse::LineBuffer;
+use super::sse::{LineBuffer, friendly_stream_error};
 
 pub async fn stream(
     app: &AppHandle,
@@ -52,11 +52,16 @@ pub async fn stream(
 
         let mut stream = resp.bytes_stream();
         let mut line_buf = LineBuffer::new();
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| AtelierError::new(ErrorCode::ProviderUnavailable, e.to_string()))?;
+        // Labeled break: a bare `break` here only exits the inner `for`,
+        // leaving the outer `while` waiting on a stream the provider
+        // already considers finished (see openai_compatible.rs, which had
+        // the same bug — the reported "stuck loading" symptom for
+        // providers that don't close the connection right after "[DONE]").
+        'stream: while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| AtelierError::new(ErrorCode::ProviderUnavailable, friendly_stream_error(&e.to_string())))?;
             for line in line_buf.push_chunk(&chunk) {
                 if let Some(data) = line.strip_prefix("data: ") {
-                    if data == "[DONE]" { break; }
+                    if data == "[DONE]" { break 'stream; }
                     if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
                         if let Some(delta) = v["delta"]["text"].as_str() {
                             emit_token(app, message_id, delta);
@@ -99,11 +104,11 @@ pub async fn stream(
 
         let mut stream = resp.bytes_stream();
         let mut line_buf = LineBuffer::new();
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| AtelierError::new(ErrorCode::ProviderUnavailable, e.to_string()))?;
+        'stream: while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| AtelierError::new(ErrorCode::ProviderUnavailable, friendly_stream_error(&e.to_string())))?;
             for line in line_buf.push_chunk(&chunk) {
                 if let Some(data) = line.strip_prefix("data: ") {
-                    if data == "[DONE]" { break; }
+                    if data == "[DONE]" { break 'stream; }
                     if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
                         if let Some(delta) = v["choices"][0]["delta"]["content"].as_str() {
                             emit_token(app, message_id, delta);

@@ -132,6 +132,7 @@ pub fn run() {
             // Files
             commands::files::file_list_tree,
             commands::files::file_create,
+            commands::files::image_attachment_save,
             commands::files::file_rename,
             commands::files::file_delete,
             commands::files::file_write,
@@ -146,6 +147,7 @@ pub fn run() {
             commands::chat::conversation_create,
             commands::chat::conversation_rename,
             commands::chat::conversation_delete,
+            commands::chat::conversation_archive,
             commands::chat::conversation_get,
             commands::chat::conversation_compress,
             commands::chat::conversation_fork,

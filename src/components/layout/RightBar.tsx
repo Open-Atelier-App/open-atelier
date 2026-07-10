@@ -8,6 +8,7 @@ import * as api from '../../lib/tauri';
 import type { FileNode } from '../../lib/types';
 import { PlanPanel } from '../chat/PlanPanel';
 import { fileTypeIcon } from '../../lib/fileIcons';
+import { ResizeHandle } from './ResizeHandle';
 
 interface Props {
   collapsed: boolean;
@@ -20,6 +21,8 @@ export function RightBar({ collapsed }: Props) {
   const openFileViewer = useUIStore(s => s.openFileViewer);
   const conversationSummary = useChatStore(s => s.activeConversation?.summary);
   const toggleRightBar = useUIStore(s => s.toggleRightBar);
+  const rightBarWidth = useUIStore(s => s.rightBarWidth);
+  const resizeRightBar = useUIStore(s => s.resizeRightBar);
   const [newFileName, setNewFileName] = useState('');
   const [showNewFile, setShowNewFile] = useState(false);
 
@@ -93,8 +96,10 @@ export function RightBar({ collapsed }: Props) {
   };
 
   return (
+    <div style={{ display: 'flex', flexShrink: 0 }}>
+    <ResizeHandle onDrag={delta => resizeRightBar(-delta)} />
     <div style={{
-      width: 280, background: 'var(--bg-sidebar)',
+      width: rightBarWidth, background: 'var(--bg-sidebar)',
       borderLeft: '1px solid var(--border)',
       display: 'flex', flexDirection: 'column', overflow: 'hidden',
     }}>
@@ -165,6 +170,7 @@ export function RightBar({ collapsed }: Props) {
 
       {/* Running plan, if any — under the files panel */}
       <PlanPanel />
+    </div>
     </div>
   );
 }

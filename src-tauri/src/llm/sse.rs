@@ -46,9 +46,49 @@ impl LineBuffer {
     }
 }
 
+/// Rewrites a raw `bytes_stream()` read error into something a user can act
+/// on. reqwest surfaces a dropped connection mid-response as its low-level
+/// message verbatim — e.g. "error decoding response body" — which is
+/// technically accurate but reads like a parsing bug in Atelier itself
+/// rather than what it actually is: the network connection to the provider
+/// broke while the response was still coming in. The raw message is kept
+/// alongside the friendlier one (in "Technical details") for anyone who
+/// wants to see it.
+pub fn friendly_stream_error(raw: &str) -> String {
+    let lower = raw.to_lowercase();
+    if lower.contains("error decoding response body")
+        || lower.contains("connection reset")
+        || lower.contains("broken pipe")
+        || lower.contains("unexpected eof")
+    {
+        format!("Connection to the model provider was interrupted while receiving the response — please try again. ({raw})")
+    } else {
+        raw.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rewrites_reqwest_decode_error_into_actionable_message() {
+        let msg = friendly_stream_error("error decoding response body");
+        assert!(msg.contains("try again"));
+        assert!(msg.contains("error decoding response body"), "should keep the raw detail for troubleshooting");
+    }
+
+    #[test]
+    fn rewrites_connection_reset_case_insensitively() {
+        let msg = friendly_stream_error("Connection Reset by peer");
+        assert!(msg.contains("try again"));
+    }
+
+    #[test]
+    fn leaves_unrelated_errors_untouched() {
+        let msg = friendly_stream_error("some other network error");
+        assert_eq!(msg, "some other network error");
+    }
 
     #[test]
     fn yields_complete_lines_within_one_chunk() {

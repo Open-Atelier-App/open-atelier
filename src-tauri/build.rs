@@ -19,5 +19,13 @@ fn main() {
     // doesn't go stale across incremental builds.
     println!("cargo:rerun-if-changed=../.git/HEAD");
 
+    // OAuth client identifiers are picked up via option_env! in the
+    // connectors themselves (see google_oauth.rs / github_oauth.rs); these
+    // hints just make sure a rebuild happens if CI sets/changes them, since
+    // Cargo doesn't track env vars for rebuilds on its own.
+    println!("cargo:rerun-if-env-changed=ATELIER_GOOGLE_OAUTH_CLIENT_ID");
+    println!("cargo:rerun-if-env-changed=ATELIER_GOOGLE_OAUTH_CLIENT_SECRET");
+    println!("cargo:rerun-if-env-changed=ATELIER_GITHUB_OAUTH_CLIENT_ID");
+
     tauri_build::build()
 }

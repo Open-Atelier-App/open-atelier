@@ -14,6 +14,11 @@ Verified frontend dependencies include React, React DOM, TypeScript, Vite, Tailw
 - Workspace state: workspaces, active workspace, file tree, index progress ([src/stores/workspaceStore.ts](../../src/stores/workspaceStore.ts#L5)).
 - Chat state: conversations, active conversation, messages, citations, tool calls, streaming state ([src/stores/chatStore.ts](../../src/stores/chatStore.ts#L5)).
 - UI state: sidebars, file viewer, theme, selected model, settings modal, missing-profile recovery, CLI provider opt-in ([src/stores/uiStore.ts](../../src/stores/uiStore.ts#L4)).
+- Favorites/recents: starred conversations and a recency trail, persisted to `localStorage` ([src/stores/recentsStore.ts](../../src/stores/recentsStore.ts#L40)).
+- Active chats: conversations streaming or finished in the background, across every project ([src/stores/activeChatsStore.ts](../../src/stores/activeChatsStore.ts#L34)).
+- Scratch widgets: ephemeral per-conversation `/timer`/`/countdown` state, never persisted or sent to the model ([src/stores/widgetStore.ts](../../src/stores/widgetStore.ts#L21)).
+
+See [the July 2026 improvement pass reference](../reference/2026-07-improvement-pass.md) for the full feature list these stores support.
 
 ## IPC Boundary
 

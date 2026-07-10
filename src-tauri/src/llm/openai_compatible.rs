@@ -2,7 +2,7 @@ use futures_util::StreamExt;
 use tauri::AppHandle;
 use crate::error::{AtelierError, ErrorCode, Result};
 use super::router::{emit_token, StreamResult};
-use super::sse::LineBuffer;
+use super::sse::{LineBuffer, friendly_stream_error};
 
 /// Generic client for the many vendors that expose an OpenAI-shaped
 /// `/chat/completions` endpoint (Groq, OpenRouter, Mistral, Together AI,
@@ -61,11 +61,22 @@ pub async fn stream(
     let mut stream = resp.bytes_stream();
     let mut line_buf = LineBuffer::new();
 
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| AtelierError::new(ErrorCode::ProviderUnavailable, e.to_string()))?;
+    // A bare `break` on "[DONE]" here only exits the inner `for` — the
+    // outer `while let Some(chunk) = stream.next().await` doesn't notice,
+    // so it goes right back to waiting on a stream the provider considers
+    // finished but may not close right away. Some providers (reports point
+    // at Mistral specifically) hold the connection open past their own
+    // "[DONE]" marker, so this could hang well past the 120s client
+    // timeout — that timeout only fires once the underlying poll actually
+    // errors or the connection drops, not just because the payload we care
+    // about already arrived. The labeled break exits both loops the moment
+    // "[DONE]" shows up, same as returning as soon as the response is
+    // actually complete.
+    'stream: while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| AtelierError::new(ErrorCode::ProviderUnavailable, friendly_stream_error(&e.to_string())))?;
         for line in line_buf.push_chunk(&chunk) {
             if let Some(data) = line.strip_prefix("data: ") {
-                if data == "[DONE]" { break; }
+                if data == "[DONE]" { break 'stream; }
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
                     if let Some(delta) = v["choices"][0]["delta"]["content"].as_str() {
                         emit_token(app, message_id, delta);
@@ -99,6 +110,22 @@ pub fn base_url_for(provider: &str) -> Option<&'static str> {
         "mistral" => Some("https://api.mistral.ai/v1"),
         "together" => Some("https://api.together.xyz/v1"),
         "deepseek" => Some("https://api.deepseek.com/v1"),
+        "xai" => Some("https://api.x.ai/v1"),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn xai_resolves_to_the_x_ai_base_url() {
+        assert_eq!(base_url_for("xai"), Some("https://api.x.ai/v1"));
+    }
+
+    #[test]
+    fn unknown_provider_resolves_to_none() {
+        assert_eq!(base_url_for("not-a-real-provider"), None);
     }
 }

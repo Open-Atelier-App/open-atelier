@@ -232,7 +232,7 @@ pub async fn workspace_suggest_name(
     // most recently instead, so the button uses a model the user has
     // already proven works rather than silently failing against one they
     // haven't configured.
-    let (ws_path, provider, model): (String, String, String) = {
+    let (ws_path, provider, model, profile_id): (String, String, String, Option<i64>) = {
         let db = db.lock().map_err(|_| AtelierError::internal("lock"))?;
         let ws_path: String = db.query_row("SELECT path FROM workspaces WHERE id = ?1", [id], |r| r.get(0))
             .map_err(|_| AtelierError::not_found("Workspace not found"))?;
@@ -246,7 +246,8 @@ pub async fn workspace_suggest_name(
         ).map_err(|_| AtelierError::internal(
             "Chat with this project at least once before using magic rename, so Atelier knows which model to use."
         ))?;
-        (ws_path, provider, model)
+        let profile_id: Option<i64> = db.query_row("SELECT profile_id FROM workspaces WHERE id = ?1", [id], |r| r.get(0)).ok();
+        (ws_path, provider, model, profile_id)
     };
 
     let dir = Path::new(&ws_path);
@@ -276,7 +277,7 @@ pub async fn workspace_suggest_name(
     let mut last_err = None;
     let mut result = None;
     for (attempt, delay_ms) in RETRY_DELAYS_MS.iter().enumerate() {
-        match llm::stream_chat(&app, -1, &provider, &model, vec![("user".to_string(), prompt.clone())]).await {
+        match llm::stream_chat(&app, -1, &provider, &model, vec![("user".to_string(), prompt.clone())], profile_id).await {
             Ok(r) => { result = Some(r); break; }
             Err(e) => {
                 log::warn!(

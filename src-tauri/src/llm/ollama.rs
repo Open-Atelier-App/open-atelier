@@ -2,7 +2,7 @@ use futures_util::StreamExt;
 use tauri::AppHandle;
 use crate::error::{AtelierError, ErrorCode, Result};
 use super::router::{emit_token, StreamResult};
-use super::sse::LineBuffer;
+use super::sse::{LineBuffer, friendly_stream_error};
 
 pub async fn stream(
     app: &AppHandle,
@@ -41,8 +41,12 @@ pub async fn stream(
     let mut stream = resp.bytes_stream();
     let mut line_buf = LineBuffer::new();
 
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| AtelierError::new(ErrorCode::ProviderUnavailable, e.to_string()))?;
+    // Labeled break: a bare `break` here only exits the inner `for`, not
+    // this `while` — the same bug found (and fixed) in openai.rs and
+    // openai_compatible.rs, where it left the stream waiting on more chunks
+    // after the provider had already said it was done.
+    'stream: while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| AtelierError::new(ErrorCode::ProviderUnavailable, friendly_stream_error(&e.to_string())))?;
         for line in line_buf.push_chunk(&chunk) {
             if line.is_empty() { continue; }
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
@@ -62,7 +66,7 @@ pub async fn stream(
                     if let Some(r) = v["done_reason"].as_str() {
                         finish_reason = Some(r.to_string());
                     }
-                    break;
+                    break 'stream;
                 }
             }
         }

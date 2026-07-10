@@ -1,14 +1,17 @@
 import { useState } from 'react';
-import { FolderOpen, Settings, ChevronDown, ChevronRight, ChevronLeft, ChevronsRight, Plus, FolderIcon, Trash2, Search } from 'lucide-react';
+import { FolderOpen, Settings, ChevronDown, ChevronRight, ChevronLeft, ChevronsRight, Plus, FolderIcon, Trash2, Search, Star, Clock, Loader2, RotateCw } from 'lucide-react';
 import logoSrc from '../../../icon.png';
 import { useWorkspaceStore } from '../../stores/workspaceStore';
 import { useProfileStore } from '../../stores/profileStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useChatStore } from '../../stores/chatStore';
+import { useRecentsStore, type RecentEntry } from '../../stores/recentsStore';
+import { useActiveChatsStore } from '../../stores/activeChatsStore';
 import { open as openDialog, message as messageDialog, confirm as confirmDialog } from '@tauri-apps/plugin-dialog';
 import { mkdir, exists } from '@tauri-apps/plugin-fs';
 import * as api from '../../lib/tauri';
 import { NewProjectDialog } from './NewProjectDialog';
+import { ResizeHandle } from './ResizeHandle';
 
 interface Props {
   collapsed: boolean;
@@ -25,8 +28,24 @@ export function LeftSidebar({ collapsed }: Props) {
   const setShowSettings = useUIStore(s => s.setShowSettings);
   const setSearchOpen = useUIStore(s => s.setSearchOpen);
   const toggleSidebar = useUIStore(s => s.toggleSidebar);
+  const sidebarWidth = useUIStore(s => s.sidebarWidth);
+  const resizeSidebar = useUIStore(s => s.resizeSidebar);
   const closeConversation = useChatStore(s => s.closeConversation);
   const loadConversations = useChatStore(s => s.loadConversations);
+  const openConversation = useChatStore(s => s.openConversation);
+  const favorites = useRecentsStore(s => s.favorites);
+  const favoriteWorkspaces = useRecentsStore(s => s.favoriteWorkspaces);
+  const isWorkspaceFavorite = useRecentsStore(s => s.isWorkspaceFavorite);
+  const toggleWorkspaceFavorite = useRecentsStore(s => s.toggleWorkspaceFavorite);
+  const removeWorkspaceEntry = useRecentsStore(s => s.removeWorkspaceEntry);
+  // Recents is deliberately NOT a live subscription — recordOpened updates
+  // the underlying store on every conversation switch, which used to
+  // reorder this section under the user's cursor constantly. Only a manual
+  // reload (button below) re-syncs what's actually displayed.
+  const [recentsSnapshot, setRecentsSnapshot] = useState(() => useRecentsStore.getState().recents);
+  const reloadRecents = () => setRecentsSnapshot(useRecentsStore.getState().recents);
+  const streamingChats = useActiveChatsStore(s => s.streaming);
+  const unreadChats = useActiveChatsStore(s => s.unread);
   const deleteWorkspace = useWorkspaceStore(s => s.delete);
   const updateProfile = useProfileStore(s => s.update);
   const setForceProfileSetup = useUIStore(s => s.setForceProfileSetup);
@@ -46,23 +65,6 @@ export function LeftSidebar({ collapsed }: Props) {
     const parent = activeWorkspace?.parent_workspace_id;
     return parent ? new Set([parent]) : new Set();
   });
-
-  const handleOpenFolder = async () => {
-    try {
-      const selected = await openDialog({ directory: true, multiple: false, defaultPath: activeProfile?.root_path });
-      if (selected && typeof selected === 'string') {
-        const ws = await openWorkspace(selected);
-        setActiveWorkspace(ws);
-        closeConversation();
-        loadConversations(ws.id);
-      }
-    } catch (e) {
-      console.error('Failed to open folder', e);
-      // workspace_open rejects paths outside the active profile's folder —
-      // surface that reason instead of failing silently.
-      await messageDialog(api.errorMessage(e), { title: 'Could not open project', kind: 'error' });
-    }
-  };
 
   const handleSelectWorkspace = async (ws: typeof workspaces[0]) => {
     try {
@@ -110,6 +112,7 @@ export function LeftSidebar({ collapsed }: Props) {
     if (!confirmed) return;
     try {
       await deleteWorkspace(ws.id);
+      removeWorkspaceEntry(ws.id);
       setMissingWorkspace(null);
     } catch (e) {
       console.error('Failed to forget workspace', e);
@@ -125,6 +128,7 @@ export function LeftSidebar({ collapsed }: Props) {
     if (!confirmed) return;
     try {
       await deleteWorkspace(ws.id);
+      removeWorkspaceEntry(ws.id);
     } catch (e) {
       console.error('Failed to delete workspace', e);
       await messageDialog(api.errorMessage(e), { title: 'Delete failed', kind: 'error' });
@@ -233,17 +237,6 @@ export function LeftSidebar({ collapsed }: Props) {
           <Plus size={18} />
         </button>
         <button
-          onClick={handleOpenFolder}
-          title="Open folder"
-          style={{
-            width: 36, height: 36, borderRadius: 4,
-            background: 'none', border: 'none', cursor: 'pointer',
-            color: 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}
-        >
-          <FolderOpen size={18} />
-        </button>
-        <button
           onClick={() => setSearchOpen(true)}
           title="Search"
           style={{
@@ -294,10 +287,32 @@ export function LeftSidebar({ collapsed }: Props) {
     );
   }
 
+  // Favorites/recents are stored per-profile-agnostic localStorage keys, so
+  // entries can point at a workspace that isn't part of the currently
+  // active profile (e.g. after switching profiles) — filtering by the
+  // loaded workspace list keeps those from showing as dead links.
+  const knownWorkspaceIds = new Set(workspaces.map(w => w.id));
+  const visibleFavorites = favorites.filter(f => knownWorkspaceIds.has(f.workspaceId));
+  const visibleFavoriteWorkspaces = favoriteWorkspaces.filter(f => knownWorkspaceIds.has(f.workspaceId));
+  const visibleRecents = recentsSnapshot.filter(r => knownWorkspaceIds.has(r.workspaceId));
+  const visibleStreaming = [...streamingChats.values()].filter(e => knownWorkspaceIds.has(e.workspaceId));
+  const visibleUnread = [...unreadChats.values()].filter(e => knownWorkspaceIds.has(e.workspaceId));
+
+  const handleOpenRecent = async (entry: RecentEntry) => {
+    const workspace = workspaces.find(w => w.id === entry.workspaceId);
+    if (!workspace) return;
+    if (activeWorkspace?.id !== workspace.id) {
+      setActiveWorkspace(workspace);
+      await loadConversations(workspace.id);
+    }
+    await openConversation(entry.conversationId);
+  };
+
   return (
+    <div style={{ display: 'flex', flexShrink: 0 }}>
     <div
       style={{
-        width: 240,
+        width: sidebarWidth,
         background: 'var(--bg-sidebar)',
         borderRight: '1px solid var(--border)',
         display: 'flex',
@@ -336,6 +351,129 @@ export function LeftSidebar({ collapsed }: Props) {
           </button>
         </div>
       </div>
+
+      {(visibleStreaming.length > 0 || visibleUnread.length > 0) && (
+        <div style={{ borderBottom: '1px solid var(--border)', padding: '4px 0 8px' }}>
+          <div style={{ padding: '8px 16px 2px', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+            Active
+          </div>
+          {visibleStreaming.map(entry => (
+            <button
+              key={entry.conversationId}
+              onClick={() => handleOpenRecent(entry)}
+              title={`${entry.title} — generating`}
+              style={{
+                width: '100%', padding: '4px 16px', background: 'none', border: 'none',
+                cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 6,
+              }}
+            >
+              <Loader2 size={12} color="var(--accent)" style={{ animation: 'spin 1s linear infinite', flexShrink: 0 }} />
+              <span style={{ fontSize: 13, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {entry.title}
+              </span>
+            </button>
+          ))}
+          {visibleUnread.map(entry => (
+            <button
+              key={entry.conversationId}
+              onClick={() => handleOpenRecent(entry)}
+              title={`${entry.title} — new response`}
+              style={{
+                width: '100%', padding: '4px 16px', background: 'none', border: 'none',
+                cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 6,
+              }}
+            >
+              <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--accent)', flexShrink: 0 }} />
+              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {entry.title}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {(visibleFavorites.length > 0 || visibleFavoriteWorkspaces.length > 0 || visibleRecents.length > 0) && (
+        <div style={{ borderBottom: '1px solid var(--border)', padding: '4px 0 8px' }}>
+          {(visibleFavorites.length > 0 || visibleFavoriteWorkspaces.length > 0) && (
+            <>
+              <div style={{ padding: '8px 16px 2px', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                Favorites
+              </div>
+              {visibleFavoriteWorkspaces.map(entry => {
+                const ws = workspaces.find(w => w.id === entry.workspaceId);
+                return (
+                  <button
+                    key={`ws-${entry.workspaceId}`}
+                    onClick={() => ws && handleSelectWorkspace(ws)}
+                    title={entry.name}
+                    style={{
+                      width: '100%', padding: '4px 16px', background: 'none', border: 'none',
+                      cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 6,
+                    }}
+                  >
+                    <FolderIcon size={12} color="var(--accent)" style={{ flexShrink: 0 }} />
+                    <span style={{ fontSize: 13, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {entry.name}
+                    </span>
+                  </button>
+                );
+              })}
+              {visibleFavorites.map(entry => (
+                <button
+                  key={entry.conversationId}
+                  onClick={() => handleOpenRecent(entry)}
+                  title={entry.title}
+                  style={{
+                    width: '100%', padding: '4px 16px', background: 'none', border: 'none',
+                    cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 6,
+                  }}
+                >
+                  <Star size={12} color="var(--accent)" fill="var(--accent)" style={{ flexShrink: 0 }} />
+                  <span style={{ fontSize: 13, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {entry.title}
+                  </span>
+                </button>
+              ))}
+            </>
+          )}
+          {visibleRecents.length > 0 && (
+            <>
+              <div style={{ padding: '8px 16px 2px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  Recent
+                </span>
+                <button
+                  onClick={reloadRecents}
+                  title="Reload recent chats"
+                  style={{
+                    width: 18, height: 18, borderRadius: 4,
+                    background: 'none', border: 'none', cursor: 'pointer',
+                    color: 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}
+                >
+                  <RotateCw size={11} />
+                </button>
+              </div>
+              {visibleRecents.slice(0, 3).map(entry => (
+                <button
+                  key={entry.conversationId}
+                  onClick={() => handleOpenRecent(entry)}
+                  title={entry.title}
+                  style={{
+                    width: '100%', padding: '4px 16px', background: 'none', border: 'none',
+                    cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 6,
+                  }}
+                >
+                  <Clock size={12} color="var(--text-muted)" style={{ flexShrink: 0 }} />
+                  <span style={{ fontSize: 13, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {entry.title}
+                  </span>
+                </button>
+              ))}
+            </>
+          )}
+        </div>
+      )}
 
       {/* Projects section title */}
       <div style={{ padding: '10px 16px 4px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -410,6 +548,8 @@ export function LeftSidebar({ collapsed }: Props) {
                 isActive={activeWorkspace?.id === ws.id}
                 onSelect={() => handleSelectWorkspace(ws)}
                 onDelete={e => handleDeleteWorkspace(e, ws)}
+                isFavorite={isWorkspaceFavorite(ws.id)}
+                onToggleFavorite={e => { e.stopPropagation(); toggleWorkspaceFavorite({ workspaceId: ws.id, name: ws.name }); }}
                 hasChildren={children.length > 0}
                 expanded={expanded}
                 onToggleExpand={() => setExpandedProjects(s => {
@@ -425,6 +565,8 @@ export function LeftSidebar({ collapsed }: Props) {
                   isActive={activeWorkspace?.id === child.id}
                   onSelect={() => handleSelectWorkspace(child)}
                   onDelete={e => handleDeleteWorkspace(e, child)}
+                  isFavorite={isWorkspaceFavorite(child.id)}
+                  onToggleFavorite={e => { e.stopPropagation(); toggleWorkspaceFavorite({ workspaceId: child.id, name: child.name }); }}
                   indent
                 />
               ))}
@@ -569,16 +711,20 @@ export function LeftSidebar({ collapsed }: Props) {
         </div>
       </div>
     </div>
+    <ResizeHandle onDrag={resizeSidebar} />
+    </div>
   );
 }
 
 function WorkspaceRow({
-  ws, isActive, onSelect, onDelete, hasChildren, expanded, onToggleExpand, indent,
+  ws, isActive, onSelect, onDelete, isFavorite, onToggleFavorite, hasChildren, expanded, onToggleExpand, indent,
 }: {
   ws: ReturnType<typeof useWorkspaceStore.getState>['workspaces'][0];
   isActive: boolean;
   onSelect: () => void;
   onDelete: (e: React.MouseEvent) => void;
+  isFavorite: boolean;
+  onToggleFavorite: (e: React.MouseEvent) => void;
   hasChildren?: boolean;
   expanded?: boolean;
   onToggleExpand?: () => void;
@@ -598,13 +744,18 @@ function WorkspaceRow({
         display: 'flex', alignItems: 'center', gap: 8,
       }}
     >
-      {hasChildren && (
+      {hasChildren ? (
         <button
           onClick={e => { e.stopPropagation(); onToggleExpand?.(); }}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, display: 'flex', flexShrink: 0 }}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, width: 12, display: 'flex', flexShrink: 0 }}
         >
           {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
         </button>
+      ) : (
+        // Reserves the same 12px the toggle chevron occupies on sibling rows
+        // that do have children, so folder icons/names line up regardless of
+        // whether any given project has sub-projects.
+        <div style={{ width: 12, flexShrink: 0 }} />
       )}
       <FolderIcon size={14} color={isActive ? 'var(--accent)' : 'var(--text-muted)'} />
       <span
@@ -617,6 +768,15 @@ function WorkspaceRow({
       >
         {ws.name}
       </span>
+      {(hovered || isFavorite) && (
+        <button
+          onClick={onToggleFavorite}
+          title={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 2, flexShrink: 0, display: 'flex' }}
+        >
+          <Star size={12} color={isFavorite ? 'var(--accent)' : 'currentColor'} fill={isFavorite ? 'var(--accent)' : 'none'} />
+        </button>
+      )}
       {hovered && (
         <button
           onClick={onDelete}

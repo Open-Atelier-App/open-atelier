@@ -84,6 +84,10 @@ export const fileListTree = (workspaceId: number) =>
 export const fileCreate = (workspaceId: number, relPath: string, content: string) =>
   invoke<WorkspaceFile>('file_create', { workspaceId, relPath, content });
 
+/** Saves a base64-encoded image (drag-drop/paste/file-picker in the chat composer) into workspace_id's attachments/ folder. `filename` is only used for its extension and as a fallback display name. */
+export const imageAttachmentSave = (workspaceId: number, filename: string, base64Data: string) =>
+  invoke<WorkspaceFile>('image_attachment_save', { workspaceId, filename, base64Data });
+
 export const fileRename = (workspaceId: number, oldRelPath: string, newRelPath: string) =>
   invoke<WorkspaceFile>('file_rename', { workspaceId, oldRelPath, newRelPath });
 
@@ -131,6 +135,11 @@ export const conversationRename = (id: number, title: string) =>
 
 export const conversationDelete = (id: number) =>
   invoke<void>('conversation_delete', { id });
+
+// Deletes the conversation like conversationDelete, but first writes its
+// full transcript to .archives/chat-<timestamp>.md inside the project.
+export const conversationArchive = (id: number) =>
+  invoke<void>('conversation_archive', { id });
 
 export const conversationGet = (id: number) =>
   invoke<{ conversation: Conversation; messages: Message[] }>('conversation_get', { id });

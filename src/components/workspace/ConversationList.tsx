@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Trash2, FolderPlus, Folder, ChevronDown, ChevronRight, Pencil, X } from 'lucide-react';
-import { confirm as confirmDialog } from '@tauri-apps/plugin-dialog';
+import { Trash2, FolderPlus, Folder, ChevronDown, ChevronRight, Pencil, X, Star, Archive } from 'lucide-react';
+import { confirm as confirmDialog, message as messageDialog } from '@tauri-apps/plugin-dialog';
 import type { Conversation } from '../../lib/types';
 import { useChatStore } from '../../stores/chatStore';
+import * as api from '../../lib/tauri';
 import { useConversationGroupStore } from '../../stores/conversationGroupStore';
+import { useRecentsStore } from '../../stores/recentsStore';
 import { relativeTime } from '../../lib/time';
 
 interface Props {
@@ -46,6 +48,7 @@ function groupByDate(conversations: Conversation[]): Record<string, Conversation
 
 export function ConversationList({ workspaceId, conversations, onSelect }: Props) {
   const deleteConversation = useChatStore(s => s.deleteConversation);
+  const archiveConversation = useChatStore(s => s.archiveConversation);
   const setConversationGroup = useChatStore(s => s.setConversationGroup);
   const groups = useConversationGroupStore(s => s.groups);
   const loadGroups = useConversationGroupStore(s => s.loadForWorkspace);
@@ -53,6 +56,8 @@ export function ConversationList({ workspaceId, conversations, onSelect }: Props
   const renameGroup = useConversationGroupStore(s => s.rename);
   const removeGroup = useConversationGroupStore(s => s.remove);
   const reorderGroups = useConversationGroupStore(s => s.reorder);
+  const isFavorite = useRecentsStore(s => s.isFavorite);
+  const toggleFavorite = useRecentsStore(s => s.toggleFavorite);
 
   const [hoveredId, setHoveredId] = useState<number | null>(null);
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
@@ -79,6 +84,21 @@ export function ConversationList({ workspaceId, conversations, onSelect }: Props
     e.stopPropagation();
     if (!await confirmDialog(`Delete "${conv.title}"?`)) return;
     await deleteConversation(conv.id);
+  };
+
+  const handleArchive = async (e: React.MouseEvent, conv: Conversation) => {
+    e.stopPropagation();
+    const confirmed = await confirmDialog(
+      `This saves the full transcript of "${conv.title}" to .archives/ in this project, then removes it from the chat list.`,
+      { title: `Archive "${conv.title}"?` },
+    );
+    if (!confirmed) return;
+    try {
+      await archiveConversation(conv.id);
+    } catch (e) {
+      console.error('Failed to archive conversation', e);
+      await messageDialog(api.errorMessage(e), { title: 'Archive failed', kind: 'error' });
+    }
   };
 
   const handleCreateGroup = async () => {
@@ -184,6 +204,37 @@ export function ConversationList({ workspaceId, conversations, onSelect }: Props
           <span>{relativeTime(conv.updated_at)}</span>
         </div>
       </button>
+      {(hoveredId === conv.id || isFavorite(conv.id)) && (
+        <button
+          onClick={e => {
+            e.stopPropagation();
+            toggleFavorite({ conversationId: conv.id, workspaceId, title: conv.title });
+          }}
+          title={isFavorite(conv.id) ? 'Remove from favorites' : 'Add to favorites'}
+          style={{
+            position: 'absolute', right: 40, top: '50%', transform: 'translateY(-50%)',
+            background: 'none', border: 'none', cursor: 'pointer',
+            color: isFavorite(conv.id) ? 'var(--accent)' : 'var(--text-muted)', padding: 4, borderRadius: 3,
+            display: 'flex', alignItems: 'center',
+          }}
+        >
+          <Star size={14} fill={isFavorite(conv.id) ? 'currentColor' : 'none'} />
+        </button>
+      )}
+      {hoveredId === conv.id && (
+        <button
+          onClick={e => handleArchive(e, conv)}
+          title="Archive (save transcript to .archives/, then remove from list)"
+          style={{
+            position: 'absolute', right: 68, top: '50%', transform: 'translateY(-50%)',
+            background: 'none', border: 'none', cursor: 'pointer',
+            color: 'var(--text-muted)', padding: 4, borderRadius: 3,
+            display: 'flex', alignItems: 'center',
+          }}
+        >
+          <Archive size={14} />
+        </button>
+      )}
       {hoveredId === conv.id && (
         <button
           onClick={e => handleDelete(e, conv)}

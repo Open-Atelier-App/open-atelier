@@ -3,6 +3,8 @@ import type { Conversation, Message, Citation, ToolCall } from '../lib/types';
 import * as api from '../lib/tauri';
 import { usePermissionStore } from './permissionStore';
 import { usePlanStore } from './planStore';
+import { useRecentsStore } from './recentsStore';
+import { useActiveChatsStore } from './activeChatsStore';
 
 interface ChatState {
   conversations: Conversation[];
@@ -25,6 +27,7 @@ interface ChatState {
   compressConversation: (id: number, provider: string, model: string) => Promise<void>;
   forkConversation: (upToMessageId: number) => Promise<void>;
   deleteConversation: (id: number) => Promise<void>;
+  archiveConversation: (id: number) => Promise<void>;
   setConversationGroup: (id: number, groupId: number | null) => Promise<void>;
   updateConversationTitle: (id: number, title: string) => void;
   updateConversationSummary: (id: number, summary: string) => void;
@@ -75,6 +78,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     try {
       const { conversation, messages } = await api.conversationGet(id);
       set({ activeConversation: conversation, messages, pendingToolCalls: [], messageCitations: {}, messageQueue: [] });
+      useRecentsStore.getState().recordOpened({
+        conversationId: conversation.id,
+        workspaceId: conversation.workspace_id,
+        title: conversation.title,
+      });
+      useActiveChatsStore.getState().markRead(conversation.id);
       // The action log (trigger results/parse errors) was only ever cleared
       // right before sending a *new* message — switching to a different
       // conversation without sending anything left the previous
@@ -99,6 +108,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       conversations: s.conversations.map(c => c.id === id ? conv : c),
       activeConversation: s.activeConversation?.id === id ? conv : s.activeConversation,
     }));
+    useRecentsStore.getState().renameEntry(id, title);
   },
 
   compressConversation: async (id, provider, model) => {
@@ -125,6 +135,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
       activeConversation: activeConversation?.id === id ? null : activeConversation,
       messages: activeConversation?.id === id ? [] : s.messages,
     }));
+    useRecentsStore.getState().removeEntry(id);
+  },
+
+  archiveConversation: async (id) => {
+    await api.conversationArchive(id);
+    const { activeConversation } = get();
+    set(s => ({
+      conversations: s.conversations.filter(c => c.id !== id),
+      activeConversation: activeConversation?.id === id ? null : activeConversation,
+      messages: activeConversation?.id === id ? [] : s.messages,
+    }));
+    useRecentsStore.getState().removeEntry(id);
   },
 
   setConversationGroup: async (id, groupId) => {
@@ -142,6 +164,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ? { ...s.activeConversation, title }
         : s.activeConversation,
     }));
+    useRecentsStore.getState().renameEntry(id, title);
   },
 
   updateConversationSummary: (id, summary) => {
@@ -159,6 +182,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
   startConversationAndSend: async (workspace_id, content, provider, model) => {
     const conv = await get().createConversation(workspace_id);
     set({ activeConversation: conv, messages: [], pendingToolCalls: [], messageCitations: {} });
+    useRecentsStore.getState().recordOpened({
+      conversationId: conv.id,
+      workspaceId: conv.workspace_id,
+      title: conv.title,
+    });
     await get().sendMessage(content, provider, model);
   },
 
@@ -214,6 +242,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // ask() returns the real assistant message (with real id) immediately
       // The actual content streams via chat://token events using the real id
       const realMsg = await api.ask(activeConversation.id, content, provider, model);
+      useActiveChatsStore.getState().startStreaming(realMsg.id, {
+        conversationId: activeConversation.id,
+        workspaceId: activeConversation.workspace_id,
+        title: activeConversation.title,
+      });
 
       // Replace temp assistant message with real one (now streaming from backend)
       set(s => ({
@@ -301,6 +334,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
         streaming: false,
         streamingMessageId: null,
       }));
+      // A cancel never gets a matching chat://done or chat://error event
+      // (the backend keeps streaming in the background; the frontend just
+      // stops listening), so without this the conversation stayed marked
+      // "active" in the sidebar forever — it looked resolved everywhere
+      // except there.
+      useActiveChatsStore.getState().finishStreaming(streamingMessageId);
       get().sendNextQueued();
     }
   },

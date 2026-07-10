@@ -2,10 +2,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tauri::State;
 use crate::db::{Db, now_ms};
-use crate::error::{AtelierError, Result};
+use crate::error::{AtelierError, ErrorCode, Result};
 use crate::models::{WorkspaceFile, FileNode};
 
 const MAX_FILE_SIZE: u64 = 50 * 1024 * 1024; // 50 MB
+const MAX_IMAGE_SIZE: usize = 10 * 1024 * 1024; // 10 MB
+const ALLOWED_IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp"];
 
 fn get_workspace_path(db: &rusqlite::Connection, workspace_id: i64) -> Result<String> {
     db.query_row(
@@ -98,6 +100,71 @@ pub fn file_create(workspace_id: i64, rel_path: String, content: String, db: Sta
         id, workspace_id,
         rel_path, abs_path,
         ext, size_bytes: meta.len() as i64,
+        mtime: now, content_hash: None,
+        index_state: "pending".into(), skip_reason: None, indexed_at: None,
+    })
+}
+
+/// Saves a base64-encoded image (dropped, pasted, or picked in the chat
+/// composer) into the workspace's `attachments/` folder as a real project
+/// file, reusing the same write path as `file_create` — it shows up in the
+/// file tree and can be referenced (e.g. via a markdown image link, which
+/// the message composer does) like anything else, rather than living in
+/// some separate, invisible blob store.
+#[tauri::command]
+pub fn image_attachment_save(workspace_id: i64, filename: String, base64_data: String, db: State<Db>) -> Result<WorkspaceFile> {
+    let ext = Path::new(&filename)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_lowercase())
+        .unwrap_or_default();
+    if !ALLOWED_IMAGE_EXTENSIONS.contains(&ext.as_str()) {
+        return Err(AtelierError::new(ErrorCode::Unsupported, format!("Unsupported image type: .{ext}")));
+    }
+
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(base64_data.as_bytes())
+        .map_err(|e| AtelierError::new(ErrorCode::Unsupported, format!("Invalid image data: {e}")))?;
+    if bytes.len() > MAX_IMAGE_SIZE {
+        return Err(AtelierError::new(ErrorCode::FileTooLarge, format!("Image is {} MB, max is {} MB", bytes.len() / 1_000_000, MAX_IMAGE_SIZE / 1_000_000)));
+    }
+
+    let ws_path = {
+        let db = db.lock().map_err(|_| AtelierError::internal("lock"))?;
+        get_workspace_path(&db, workspace_id)?
+    };
+
+    // Unique, collision-proof name — pasted/dropped images rarely have a
+    // meaningful filename of their own (e.g. "image.png" from a clipboard
+    // paste), so timestamp-prefixing avoids silently overwriting a
+    // previous attachment that happened to get the same generic name.
+    let safe_name = Path::new(&filename).file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| format!("image.{ext}"));
+    let rel_path = format!("attachments/{}-{safe_name}", now_ms());
+
+    let target = validate_path(&ws_path, &rel_path)?;
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(AtelierError::from)?;
+    }
+    fs::write(&target, &bytes).map_err(AtelierError::from)?;
+
+    let meta = fs::metadata(&target).map_err(AtelierError::from)?;
+    let now = now_ms();
+    let abs_path = target.to_string_lossy().to_string();
+
+    let db = db.lock().map_err(|_| AtelierError::internal("lock"))?;
+    db.execute(
+        "INSERT INTO files (workspace_id, rel_path, abs_path, ext, size_bytes, mtime, index_state)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending')
+         ON CONFLICT(workspace_id, rel_path) DO UPDATE SET size_bytes=excluded.size_bytes, mtime=excluded.mtime, index_state='pending'",
+        rusqlite::params![workspace_id, rel_path, abs_path, ext, meta.len() as i64, now],
+    )?;
+    let id = db.last_insert_rowid();
+    Ok(WorkspaceFile {
+        id, workspace_id,
+        rel_path, abs_path,
+        ext: Some(ext), size_bytes: meta.len() as i64,
         mtime: now, content_hash: None,
         index_state: "pending".into(), skip_reason: None, indexed_at: None,
     })

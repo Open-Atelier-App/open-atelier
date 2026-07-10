@@ -1,6 +1,6 @@
 {
   "productName": "Open Atelier",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "com.openatelier.app",
   "build": {
     "frontendDist": "../dist",
@@ -46,7 +46,7 @@
       "endpoints": [
         "https://open-atelier.app/update/{{target}}/{{current_version}}"
       ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDM5QkUzOTI3Q0UzREE3MEMKUldRTXB6M09Kem0rT1pXdmUwTkFoekR1Z1dGOUpOU0ROU2xiVFpZRHRucWR4bjFEQWN6Vjk5ZTUK"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc4QTc0ODVGODUxRTIxNEMKUldSTUlSNkZYMGluZU4yM1FUVTBoZ3FRRUorQVVndlVQZ3ZGQVp6KzhQd0Z0VmZhaW9GNWF1eGcK"
     }
   }
 }

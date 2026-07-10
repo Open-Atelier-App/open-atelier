@@ -13,11 +13,15 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 // Register a real GitHub OAuth App at https://github.com/settings/developers
-// with Device Flow enabled, then replace this with its client ID (a public
-// identifier, not a secret — safe to commit). Left as a placeholder here
-// since this repo doesn't have one of its own; GitHub will reject requests
-// with a clear "incorrect_client_credentials"-style error until it's set.
-const CLIENT_ID: &str = "REPLACE_WITH_REAL_GITHUB_OAUTH_CLIENT_ID";
+// with Device Flow enabled, then set its client ID as ATELIER_GITHUB_OAUTH_CLIENT_ID
+// at build time (a public identifier, not a secret — safe to commit or embed).
+// Falls back to a placeholder that GitHub rejects with a clear error until
+// the env var is set, so behavior is unchanged for anyone who hasn't
+// configured it yet.
+const CLIENT_ID: &str = match option_env!("ATELIER_GITHUB_OAUTH_CLIENT_ID") {
+    Some(id) => id,
+    None => "REPLACE_WITH_REAL_GITHUB_OAUTH_CLIENT_ID",
+};
 
 fn client() -> reqwest::Client {
     reqwest::Client::builder()

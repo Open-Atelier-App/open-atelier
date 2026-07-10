@@ -10,3 +10,16 @@ export function relativeTime(ts: number): string {
   if (days < 7) return `${days}d ago`;
   return new Date(ts).toLocaleDateString();
 }
+
+/** Full date + time for a tooltip, e.g. "Thursday, July 10, 2026 at 2:41:03 PM". */
+export function fullDateTime(ts: number): string {
+  return new Date(ts).toLocaleString(undefined, {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}

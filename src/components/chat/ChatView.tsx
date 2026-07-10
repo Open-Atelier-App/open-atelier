@@ -9,6 +9,7 @@ import { ChatInput } from './ChatInput';
 import { ToolCallCard } from './ToolCallCard';
 import { PermissionBadge } from './PermissionBadge';
 import { TriggerErrorBlock } from './TriggerErrorBlock';
+import { ConversationWidgets } from './ConversationWidgets';
 import { usePermissionStore } from '../../stores/permissionStore';
 import { messagesSinceCompression } from '../../lib/conversation';
 
@@ -30,12 +31,28 @@ export function ChatView() {
   const model = useUIStore(s => s.selectedModel);
   const triggerResults = usePermissionStore(s => s.triggerResults);
   const triggerErrors = usePermissionStore(s => s.triggerErrors);
+  const renameIntent = useUIStore(s => s.renameIntent);
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages]);
+
+  // Fired by the /rename slash command in ChatInput — this component owns
+  // the actual inline title editor, so the command just signals intent via
+  // this counter (same pattern as newChatIntent/searchFocusIntent) rather
+  // than duplicating an edit-title UI down in the composer. Adjusting state
+  // during render (comparing against the last-seen counter value) instead
+  // of an effect, same as the draft-key pattern in ChatInput.
+  const [handledRenameIntent, setHandledRenameIntent] = useState(renameIntent);
+  if (renameIntent !== handledRenameIntent) {
+    setHandledRenameIntent(renameIntent);
+    if (activeConversation) {
+      setTitleDraft(activeConversation.title);
+      setEditingTitle(true);
+    }
+  }
 
   if (!activeConversation) return null;
 
@@ -54,17 +71,17 @@ export function ChatView() {
   const handleCompress = async () => {
     if (compressing) return;
     const confirmed = await confirmDialog(
-      'This summarizes the conversation so far into a memory and continues from there, keeping the same model — useful to shrink a long thread. To switch models instead, use the locked model picker in the composer below.',
+      'This summarizes the conversation so far into a memory and continues from there, keeping the same model — useful to shrink a long thread. To switch models instead, use the model picker in the composer below.',
       { title: 'Compress this session?' },
     );
     if (!confirmed) return;
     setCompressing(true);
     try {
       // Compress in place with whatever model this conversation is already
-      // using — switching models is a separate, guided flow (see
-      // SwitchModelModal, opened from the composer's locked picker), not
-      // this button's job. Falls back to the global new-chat picker only
-      // for the edge case of a conversation with no provider/model set yet.
+      // using — switching models is just picking a different one from the
+      // composer's own selector, not this button's job. Falls back to the
+      // global new-chat picker only for the edge case of a conversation
+      // with no provider/model set yet.
       await compressConversation(activeConversation.id, activeConversation.provider ?? provider, activeConversation.model ?? model);
     } catch (e) {
       console.error('Failed to compress session', e);
@@ -182,6 +199,9 @@ export function ChatView() {
       {(triggerResults.length > 0 || triggerErrors.length > 0) && (
         <TriggerErrorBlock results={triggerResults} errors={triggerErrors} />
       )}
+
+      {/* Scratch widgets (/timer, /countdown) — ephemeral, per-conversation, not part of the transcript */}
+      <ConversationWidgets conversationId={activeConversation.id} />
 
       {/* Input */}
       <ChatInput conversationId={activeConversation.id} />

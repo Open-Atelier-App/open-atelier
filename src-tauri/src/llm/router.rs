@@ -1,5 +1,6 @@
 use tauri::{AppHandle, Emitter};
-use crate::commands::cred_store::store_get;
+use crate::commands::cred_store::{store_get, profile_store_get};
+use crate::commands::settings::cred_keyring_name;
 use crate::error::{AtelierError, ErrorCode, Result};
 use crate::models::ChatToken;
 use super::{openai, anthropic, google, ollama, openai_compatible};
@@ -40,9 +41,34 @@ pub fn is_truncated(finish_reason: &Option<String>) -> bool {
 
 /// Fetch a stored API key/value for `provider` from the local encrypted
 /// credential store (see `cred_store`) — Atelier never uses the OS keychain.
-fn get_key(provider: &str) -> Result<String> {
-    match store_get(SERVICE_NAME, provider)? {
-        Some((value, _backend)) => Ok(value),
+///
+/// The Settings screen saves every key profile-scoped (`cred_save_profile`),
+/// so that's the source of truth and is checked first when a profile is
+/// known. The global store is checked after as a fallback for two older
+/// schemes: the per-cred-type name every Settings save also mirrors to
+/// globally as a legacy convenience, and the bare-provider-name the old
+/// `key_save` command wrote before profiles existed — this function used to
+/// check the global store exclusively, which meant a key entered in Settings
+/// for a real profile could silently fail to resolve at request time whenever
+/// that global mirror was stale, missing, or corrupt for a given provider.
+fn get_key(provider: &str, profile_id: Option<i64>) -> Result<String> {
+    let cred_name = cred_keyring_name(provider, "api_key");
+
+    if let Some(pid) = profile_id {
+        if let Some((value, _backend)) = profile_store_get(pid, SERVICE_NAME, &cred_name)? {
+            return Ok(value);
+        }
+        if let Some((value, _backend)) = profile_store_get(pid, SERVICE_NAME, provider)? {
+            return Ok(value);
+        }
+    }
+
+    let found = match store_get(SERVICE_NAME, &cred_name)? {
+        Some((value, _backend)) => Some(value),
+        None => store_get(SERVICE_NAME, provider)?.map(|(value, _backend)| value),
+    };
+    match found {
+        Some(value) => Ok(value),
         None => Err(AtelierError::new(
             ErrorCode::ProviderUnauthorized,
             format!("No API key configured for {provider}. Add one in Settings."),
@@ -69,33 +95,34 @@ pub async fn stream_chat(
     provider: &str,
     model: &str,
     history: Vec<(String, String)>,
+    profile_id: Option<i64>,
 ) -> Result<StreamResult> {
     let messages = build_messages(&history);
 
     match provider {
         "openai" => {
-            let key = get_key("openai")?;
+            let key = get_key("openai", profile_id)?;
             openai::stream(app, message_id, &key, model, messages, false).await
         }
         "openai-codex" => {
-            let key = get_key("openai")?; // same key, different endpoint
+            let key = get_key("openai", profile_id)?; // same key, different endpoint
             openai::stream(app, message_id, &key, model, messages, true).await
         }
         "anthropic" => {
-            let key = get_key("anthropic")?;
+            let key = get_key("anthropic", profile_id)?;
             anthropic::stream(app, message_id, &key, model, messages).await
         }
         "google" => {
-            let key = get_key("google")?;
+            let key = get_key("google", profile_id)?;
             google::stream(app, message_id, &key, model, messages).await
         }
         "ollama" => {
-            let base_url = get_key("ollama").unwrap_or_else(|_| "http://localhost:11434".to_string());
+            let base_url = get_key("ollama", profile_id).unwrap_or_else(|_| "http://localhost:11434".to_string());
             ollama::stream(app, message_id, &base_url, model, messages).await
         }
         other => {
             if let Some(base_url) = openai_compatible::base_url_for(other) {
-                let key = get_key(other)?;
+                let key = get_key(other, profile_id)?;
                 // OpenRouter asks integrators to identify their app via these
                 // headers; harmless no-ops for the other OpenAI-compatible vendors.
                 let extra_headers: &[(&str, &str)] = if other == "openrouter" {

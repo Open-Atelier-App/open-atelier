@@ -7,6 +7,7 @@ import { useWorkspaceStore } from '../stores/workspaceStore';
 import { useUIStore } from '../stores/uiStore';
 import { usePermissionStore } from '../stores/permissionStore';
 import { usePlanStore } from '../stores/planStore';
+import { useActiveChatsStore } from '../stores/activeChatsStore';
 import * as api from '../lib/tauri';
 
 const FS_MUTATING_ACTIONS = new Set([
@@ -61,6 +62,13 @@ export function useTauriEvents() {
 
     subscribe<ChatDone>('chat://done', payload => {
       completeMessage(payload.message_id, payload.citations, payload.has_more, payload.display_override);
+      // has_more means a continuation message is already on its way (see
+      // chat://continuation below) — not actually done yet, so don't clear
+      // this conversation's "streaming" state until the real last message
+      // completes.
+      if (!payload.has_more) {
+        useActiveChatsStore.getState().finishStreaming(payload.message_id);
+      }
     });
 
     subscribe<ChatContinuation>('chat://continuation', payload => {
@@ -72,10 +80,16 @@ export function useTauriEvents() {
       if (active?.id === payload.message.conversation_id) {
         addMessage(payload.message);
       }
+      // The conversation is already registered as streaming (from the
+      // message that triggered this continuation) — just map this new
+      // message id back to it so the eventual chat://done/error for *this*
+      // message can still find and clear it.
+      useActiveChatsStore.getState().registerContinuationMessage(payload.message.id, payload.message.conversation_id);
     });
 
     subscribe<ChatError>('chat://error', payload => {
       errorMessage(payload.message_id, payload.error.message);
+      useActiveChatsStore.getState().finishStreaming(payload.message_id);
     });
 
     subscribe<ToolProposed>('tool://proposed', payload => {
@@ -135,6 +149,13 @@ export function useTauriEvents() {
         const workspace = useWorkspaceStore.getState().active;
         if (workspace) {
           useWorkspaceStore.getState().loadFileTree(workspace.id);
+        }
+        // If the file this trigger just wrote is the one currently open in
+        // the viewer, its content-fetch effect otherwise has no reason to
+        // refire — path/workspaceId didn't change — and the panel would
+        // keep showing what it read before the edit.
+        if (payload.file_path) {
+          useUIStore.getState().refreshFileViewer(payload.file_path);
         }
       }
     });

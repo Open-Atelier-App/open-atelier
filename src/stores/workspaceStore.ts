@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { Workspace, FileNode, IndexProgress } from '../lib/types';
 import * as api from '../lib/tauri';
+import { useUIStore } from './uiStore';
 
 interface WorkspaceState {
   workspaces: Workspace[];
@@ -73,6 +74,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   setActive: (workspace) => {
+    // The file viewer holds a path from whatever project was open before —
+    // without this it kept showing that project's file (or an error, if no
+    // file of the same relative path exists in the new one) right through
+    // the switch, since neither its own path nor the new workspaceId prop
+    // gives it a reason to close on its own.
+    if (get().active?.id !== workspace?.id) {
+      useUIStore.getState().closeFileViewer();
+    }
     set({ active: workspace, fileTree: [], indexProgress: null });
     if (workspace) {
       get().loadFileTree(workspace.id);

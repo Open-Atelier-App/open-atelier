@@ -17,14 +17,23 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 // Register a real OAuth client at https://console.cloud.google.com/apis/credentials
-// with application type "Desktop app", then replace these. Google's own
-// installed-app guidance treats a Desktop app's client secret as non-
-// confidential (it can't be kept secret in a distributed binary either
-// way) — see the link above — but it's still a per-project value, not a
-// real secret to protect, and isn't set here since this repo doesn't have
-// one of its own.
-const CLIENT_ID: &str = "REPLACE_WITH_REAL_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com";
-const CLIENT_SECRET: &str = "REPLACE_WITH_REAL_GOOGLE_OAUTH_CLIENT_SECRET";
+// with application type "Desktop app". Google's own installed-app guidance
+// treats a Desktop app's client secret as non-confidential (it can't be
+// kept secret in a distributed binary either way) — see the link above —
+// but it's still a per-project value, not a real secret to protect.
+//
+// Read at compile time from ATELIER_GOOGLE_OAUTH_CLIENT_ID/_SECRET so CI can
+// embed the real values (e.g. via repo/org-level build variables) without
+// anyone needing to edit this file; falls back to the placeholder below
+// when unset, which is rejected the same way a real but wrong ID would be.
+const CLIENT_ID: &str = match option_env!("ATELIER_GOOGLE_OAUTH_CLIENT_ID") {
+    Some(id) => id,
+    None => "REPLACE_WITH_REAL_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com",
+};
+const CLIENT_SECRET: &str = match option_env!("ATELIER_GOOGLE_OAUTH_CLIENT_SECRET") {
+    Some(secret) => secret,
+    None => "REPLACE_WITH_REAL_GOOGLE_OAUTH_CLIENT_SECRET",
+};
 
 const SCOPE: &str = "https://www.googleapis.com/auth/drive.readonly openid email";
 

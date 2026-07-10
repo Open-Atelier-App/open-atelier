@@ -22,6 +22,7 @@ Technical documentation for contributors. Product documentation and guides are a
 
 - [Environment variables](reference/environment-variables.md)
 - [API reference](reference/api-reference.md)
+- [July 2026 improvement pass](reference/2026-07-improvement-pass.md) - every feature added while working through the French-language improvement report: composer changes, sidebar features, chat message viewers (charts, math, Mermaid, recipe/map/kanban/weather cards, scratch timers), and what was deliberately scoped down or left out.
 - [Source records](reference/source-records/README.md)
 
 ## AI Context

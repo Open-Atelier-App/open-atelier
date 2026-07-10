@@ -52,6 +52,7 @@ export function EmptyState() {
         </div>
         {[
           ['⌘N', 'New chat'],
+          ['⌘⇧N', 'Quick chat'],
           ['⌘T', 'New tab'],
           ['⌘K', 'Search'],
           ['⌘,', 'Settings'],
