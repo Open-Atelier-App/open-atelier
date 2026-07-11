@@ -56,12 +56,13 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: macos-14
-            target: aarch64-apple-darwin
-            contract_target: darwin-aarch64
-          - os: macos-14
-            target: x86_64-apple-darwin
-            contract_target: darwin-x86_64
+          # macOS legs (aarch64-apple-darwin, x86_64-apple-darwin) are
+          # deliberately not built here: macos-14 GitHub-hosted runners bill
+          # against paid minutes (10x multiplier vs. Linux), and this
+          # account's billing is blocked. Built locally instead and uploaded
+          # by hand alongside this job's Linux artifact — see release notes
+          # for v0.1.1. Re-add here once billing is sorted or a self-hosted
+          # macOS runner is wired up.
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             contract_target: linux-x86_64
