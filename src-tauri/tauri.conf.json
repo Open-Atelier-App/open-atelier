@@ -45,7 +45,7 @@
   "plugins": {
     "updater": {
       "endpoints": [
-        "https://open-atelier.app/update/{{target}}/{{current_version}}"
+        "https://open-atelier.app/update/{{target}}-{{arch}}/{{current_version}}"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc4QTc0ODVGODUxRTIxNEMKUldSTUlSNkZYMGluZU4yM1FUVTBoZ3FRRUorQVVndlVQZ3ZGQVp6KzhQd0Z0VmZhaW9GNWF1eGcK"
     }
